@@ -24,9 +24,11 @@ rule all:
     input:
         STAR_INDEX,
         expand('qc/{sample_name}_{lane}_R1_001_fastqc.html', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
-        expand('preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
+        expand('preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_trimmed.fq.gz', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
         expand('mapped/bams/{sample_name}/{sample_name}_{lane}.bam', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
         expand('mapped/merged_bams/{sample_name}.bam', sample_name=SAMPLE_NAMES),
+        expand('mapped/counts_strict/byExon/{sample}.exon.counts.tsv', sample=SAMPLE_NAMES),
+        expand('mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLE_NAMES),
         'multiqc_report/multiqc_report.html',
         #expand('mapped/counts_strict/{sample}.counts.tsv', sample=SAMPLE_NAMES),
         #'mapped/DE_analysis/'+GENOME_BUILD+'.DESeq2.all.tsv',
@@ -98,7 +100,6 @@ rule map_star:
     params:
         prefix = 'mapped/bams/{sample_name}_{lane}',
         unmapped = 'unmapped/fastq/{sample_name}_{lane}',
-        unmapped = 'unmapped/fastq/{sample}',
         starlogs = 'mapped/starlogs'
     threads: 16
     shell:
@@ -107,7 +108,7 @@ rule map_star:
              --genomeDir {input.index}\
              --outFileNamePrefix {params.prefix} --readFilesIn {input.R1}\
              --outSAMtype BAM SortedByCoordinate\
-             --readFilesCommand cat\
+             --readFilesCommand zcat\
              --outReadsUnmapped {params.unmapped} && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} && mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
         '''
 
@@ -128,15 +129,26 @@ rule sort_by_name:
             samtools sort -on {input} -T /tmp/ -o {output}
         '''
 
-rule count:
+rule count_cds:
     input: 'mapped/merged_bams/{sample}.sortedByName.bam'
     params:
         annotation=GTF,
         phred_cutoff=5
-    output: 'mapped/counts_strict/{sample}.counts.tsv'
+    output: 'mapped/counts_strict/byExon/{sample}.exon.counts.tsv'
     shell:
         r'''
         source activate clipseq2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded=no --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}
+        '''
+
+rule count_exon:
+    input: 'mapped/merged_bams/{sample}.sortedByName.bam'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv'
+    shell:
+        r'''
+        source activate clipseq2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded=no --minaqual={params.phred_cutoff} --type=CDS --idattr=gene_id {input} {params.annotation} > {output}
         '''
 
 rule format_counts:
@@ -259,7 +271,6 @@ rule get_duplication_estimate:
 rule run_multiqc:
     input:
         expand('qc/{sample_name}_{lane}_R1_001_fastqc.html', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
-        expand('qc/{sample_name}_{lane}_R2_001_fastqc.html', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
         expand('mapped/post_mapping_deduplication/{sample}/output.DupRate_plot.r', sample=SAMPLE_NAMES),
         expand('mapped/post_mapping_qualimap/{sample}/qualimapReport.html', sample=SAMPLE_NAMES),
         expand('mapped/merged_bams/{sample}.bam', sample=SAMPLE_NAMES)
