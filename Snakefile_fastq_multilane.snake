@@ -19,7 +19,9 @@ for sample in SAMPLES:
 SAMPLE_LANE = set(SAMPLE_LANE)
 SAMPLE_LANE = sorted(SAMPLE_LANE, key=lambda tup: tup[0])
 SAMPLE_NAMES, LANE_NAMES = zip(*SAMPLE_LANE)
+SAMPLE_NAMES_U = sorted(set(SAMPLE_NAMES))
 
+print(SAMPLE_NAMES_U)
 rule all:
     input:
         STAR_INDEX,
@@ -31,7 +33,7 @@ rule all:
         expand('mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLE_NAMES),
         'multiqc_report/multiqc_report.html',
         #expand('mapped/counts_strict/{sample}.counts.tsv', sample=SAMPLE_NAMES),
-        #'mapped/DE_analysis/'+GENOME_BUILD+'.DESeq2.all.tsv',
+        'mapped/DE_analysis/'+GENOME_BUILD+'.clone3_VS_control.all.tsv',
         #expand('mapped/tpm/{sample}.tpm.tsv', sample=SAMPLE_NAMES),
 
 
@@ -129,7 +131,7 @@ rule sort_by_name:
             samtools sort -on {input} -T /tmp/ -o {output}
         '''
 
-rule count_cds:
+rule count_exon:
     input: 'mapped/merged_bams/{sample}.sortedByName.bam'
     params:
         annotation=GTF,
@@ -140,7 +142,7 @@ rule count_cds:
         source activate clipseq2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded=no --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}
         '''
 
-rule count_exon:
+rule count_cds:
     input: 'mapped/merged_bams/{sample}.sortedByName.bam'
     params:
         annotation=GTF,
@@ -152,8 +154,8 @@ rule count_exon:
         '''
 
 rule format_counts:
-    input: 'mapped/counts_strict/{sample}.counts.tsv'
-    output: 'mapped/counts_strict/{sample}.counts.noversion.tsv'
+    input: 'mapped/counts_strict/byExon/{sample}.exon.counts.tsv'
+    output: 'mapped/counts_strict/byExon/{sample}.counts.noversion.tsv'
     shell:
         r'''
         cat {input} | sed -E 's/\.[0-9]+//' > {output}
@@ -161,13 +163,13 @@ rule format_counts:
         '''
 
 rule run_deseq:
-    input: expand('mapped/counts_strict/{sample}.counts.noversion.tsv', sample=SAMPLE_NAMES)
+    input: expand('mapped/counts_strict/byExon/{sample}.counts.noversion.tsv', sample=SAMPLE_NAMES_U)
     output:
-        'mapped/DE_analysis/'+GENOME_BUILD+'.DESeq2.all.tsv',
-        'mapped/DE_analysis/'+GENOME_BUILD+'.DESeq2.sig.tsv'
+        'mapped/DE_analysis/'+GENOME_BUILD+'.clone3_VS_control.all.tsv',
+        'mapped/DE_analysis/'+GENOME_BUILD+'.clone5_VS_control.sig.tsv'
 
     params:
-        basedir = 'mapped/counts_strict/',
+        basedir = 'mapped/counts_strict/byExon',
         inprefix = 'counts.noversion',
         gene_annotations  = GENE_NAMES,
         outprefix = 'mapped/DE_analysis/'+GENOME_BUILD
