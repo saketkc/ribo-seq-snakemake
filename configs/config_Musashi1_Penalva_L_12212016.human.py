@@ -1,7 +1,7 @@
 GENOMES_DIR='/home/cmb-panasas2/skchoudh/genomes'
 OUT_DIR = '/staging/as/skchoudh/rna/Musashi1_02222017/human/rna_seq_Penalva_L_12212016'
 SRC_DIR = '/home/cmb-panasas2/skchoudh/github_projects/ribo-seq-snakemake/scripts'
-RAWDATA_DIR ='/staging/as/skchoudh/dna/Penalva_02222017/Penalva_L_12212016'
+RAWDATA_DIR ='/staging/as/skchoudh/dna/Penalva_02222017/Penalva_L_12212016_d'
 GENOME_BUILD = 'hg38'
 GENOME_FASTA = GENOMES_DIR + '/' + GENOME_BUILD + '/fasta/'+ GENOME_BUILD+ '.fa'
 STAR_INDEX = GENOMES_DIR + '/' + GENOME_BUILD + '/star_annotated'

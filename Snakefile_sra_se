@@ -1,5 +1,6 @@
 include:
-    'configs/config_HuR_Penalva_L_01182017.human.py'
+    'configs/config_HuR_GSE62134.mouse.py'
+    #'configs/config_HuR_Penalva_L_01182017.human.py'
 
 workdir: OUT_DIR
 
@@ -8,43 +9,52 @@ from os.path import join
 import glob
 import re
 
-SAMPLES = glob.glob('{}**/*.fastq.gz'.format(RAWDATA_DIR), recursive=True)
-SAMPLE_LANE = []
-for sample in SAMPLES:
-    sample = sample.replace('{}/'.format(RAWDATA_DIR),'')
-    sample_name = re.split(r'_L\d\d\d_', sample)[0]
-    lane_name = re.search(r'L\d\d\d', sample).group()
-    SAMPLE_LANE.append((sample_name, lane_name))
+SAMPLES = glob.glob('{}/**/*.sra'.format(RAWDATA_DIR), recursive=True)
+SAMPLES = sorted([sample.replace('{}/'.format(RAWDATA_DIR),'').replace('.sra','') for sample in SAMPLES])
 
-SAMPLE_LANE = set(SAMPLE_LANE)
-SAMPLE_LANE = sorted(SAMPLE_LANE, key=lambda tup: tup[0])
-SAMPLE_NAMES, LANE_NAMES = zip(*SAMPLE_LANE)
-SAMPLE_NAMES_U = sorted(set(SAMPLE_NAMES))
-
-print(SAMPLE_NAMES_U)
 rule all:
     input:
         STAR_INDEX,
-        expand('qc/{sample_name}_{lane}_R1_001_fastqc.html', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
-        expand('preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_trimmed.fq.gz', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
-        expand('mapped/bams/{sample_name}/{sample_name}_{lane}.bam', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
-        expand('mapped/merged_bams/{sample_name}.bam', sample_name=SAMPLE_NAMES),
-        expand('mapped/counts_strict/byExon/{sample}.exon.counts.tsv', sample=SAMPLE_NAMES),
-        expand('mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLE_NAMES),
-        'mapped/tpm/masterTPM.tsv',
-        'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.all.tsv',
-        'mapped/DE_analysis/featureCounts/'+GENOME_BUILD+'.featureCounts.DESeq2.sig.tsv',
-        'multiqc_report/multiqc_report.html',
+        #expand('qc/{sample_name}_fastqc.html', sample_name=SAMPLES),
+        expand('sratofastq/{sample}.fastq.gz', sample=SAMPLES),
+        #expand('preprocessed/{sample_name}_trimmed.fastq.gz', sample_name=SAMPLES),
+        #expand('mapped/bams/{sample_name}.bam', sample_name=SAMPLES),
+        #expand('mapped/counts_strict/byExon/{sample}.exon.counts.tsv', sample=SAMPLES),
+        #expand('mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLES),
+        #'mapped/tpm/masterTPM.tsv',
+        #'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.all.tsv',
+        #'mapped/DE_analysis/featureCounts/'+GENOME_BUILD+'.featureCounts.DESeq2.sig.tsv',
+        #'multiqc_report/multiqc_report.html',
 
+rule create_index:
+    input:
+        GENOME_FASTA,
+        GTF
+    output: STAR_INDEX
+    threads: 16
+    shell:
+        r'''mkdir -p {output} && STAR --runThreadN 16\
+            --runMode genomeGenerate \
+            --genomeDir {output} \
+            --genomeFastaFiles {input[0]}\
+            --sjdbGTFfile {input[1]}'''
+
+rule sra_to_fastq:
+    input: RAWDATA_DIR + '/{sample}.sra'
+    output: 'sratofastq/{sample}.fastq.gz'
+    params: 
+        prefix='sratofastq/{sample}.fastq'
+    shell:
+        r'''fastq-dump --split-3 -O sratofastq {input} && gzip {params.prefix}'''
 
 rule perform_qc:
     input:
-        R1=RAWDATA_DIR+'/{sample_name}_{lane}_R1_001.fastq.gz',
+        R1='sratofastq/{sample_name}.fastq.gz',
     params:
         out_dir = 'qc'
     output:
-       'qc/{sample_name}_{lane}_R1_001_fastqc.html',
-       'qc/{sample_name}_{lane}_R1_001_fastqc.zip',
+       'qc/{sample_name}_fastqc.html',
+       'qc/{sample_name}_fastqc.zip',
     shell:
         r'''
             fastqc -o {params.out_dir} -f fastq {input.R1}
@@ -52,56 +62,25 @@ rule perform_qc:
 
 rule perfom_trimming:
     input:
-        R1=RAWDATA_DIR+'/{sample_name}_{lane}_R1_001.fastq.gz',
+        R1='sratofastq/{sample_name}.fastq.gz',
     params:
         out_dir='preprocessed/{sample_name}',
         phred_cutoff=5
     output:
-        'preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_trimmed.fq.gz',
+        'preprocessed/{sample_name}_trimmed.fastq.gz',
     shell:
         r'''
             trim_galore -o {params.out_dir} -q {params.phred_cutoff} {input.R1}
         '''
 
-"""
-rule map_starlong:
-    input:
-        R1='preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz',
-        R2='preprocessed/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz',
-        index=STAR_INDEX
-    output: 'mapped/bams/{sample_name}/{sample_name}_{lane}.bam'
-    params:
-        prefix = 'mapped/bams/{sample_name}_{lane}',
-        unmapped = 'unmapped/fastq/{sample_name}_{lane}',
-        starlogs = 'mapped/starlogs'
-    threads: 16
-    shell:
-        r'''
-        STARlong --runThreadN {threads}\
-             --genomeDir {input.index}\
-             --outFileNamePrefix {params.prefix} --readFilesIn {input.R1} {input.R2}\
-             --outSAMtype BAM SortedByCoordinate\
-             --readFilesCommand zcat\
-             --outReadsUnmapped {params.unmapped}\
-            --outFilterMultimapScoreRange 20\
-            --outFilterScoreMinOverLread 0\
-            --outFilterMatchNminOverLread 0.66\
-            --outFilterMismatchNmax 100\
-            --winAnchorMultimapNmax 200\
-            --seedPerReadNmax 100000 --seedPerWindowNmax 100\
-            && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} &&\
-            mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out\
-            {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
-        '''
-"""
 rule map_star:
     input:
-        R1='preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_trimmed.fq.gz',
+        R1='preprocessed/{sample_name}_trimmed.fq.gz',
         index=STAR_INDEX
-    output: 'mapped/bams/{sample_name}/{sample_name}_{lane}.bam'
+    output: 'mapped/bams/{sample_name}.bam'
     params:
-        prefix = 'mapped/bams/{sample_name}_{lane}',
-        unmapped = 'unmapped/fastq/{sample_name}_{lane}',
+        prefix = 'mapped/bams/{sample_name}',
+        unmapped = 'unmapped/fastq/{sample_name}',
         starlogs = 'mapped/starlogs'
     threads: 16
     shell:
@@ -114,25 +93,17 @@ rule map_star:
              --outReadsUnmapped {params.unmapped} && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} && mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
         '''
 
-## See: https://software.broadinstitute.org/gatk/guide/article?id=3060
-## Merging should happen post alignment
-rule merge_bams:
-    input: expand('mapped/bams/{{sample_name}}/{{sample_name}}_{lane}.bam', lane=set(LANE_NAMES))
-    output: 'mapped/merged_bams/{sample_name}.bam'
-    run:
-        cmd = ' -in '.join(input)
-        shell(r'''bamtools merge -in {cmd} -out {output}''')
 
 rule sort_by_name:
-    input: 'mapped/merged_bams/{sample}.bam'
-    output: 'mapped/merged_bams/{sample}.sortedByName.bam'
+    input: 'mapped/bams/{sample}.bam'
+    output: 'mapped/bams/{sample}.sortedByName.bam'
     shell:
         r'''
             samtools sort -on {input} -T /tmp/ -o {output}
         '''
 
 rule count_exon:
-    input: 'mapped/merged_bams/{sample}.sortedByName.bam'
+    input: 'mapped/bams/{sample}.sortedByName.bam'
     params:
         annotation=GTF,
         phred_cutoff=5
@@ -143,7 +114,7 @@ rule count_exon:
         '''
 
 rule count_cds:
-    input: 'mapped/merged_bams/{sample}.sortedByName.bam'
+    input: 'mapped/bams/{sample}.sortedByName.bam'
     params:
         annotation=GTF,
         phred_cutoff=5
@@ -163,7 +134,7 @@ rule format_counts:
         '''
 
 rule featurecounts:
-    input: expand('mapped/merged_bams/{sample}.sortedByName.bam', sample=set(SAMPLE_NAMES_U))
+    input: expand('mapped/bams/{sample}.sortedByName.bam', sample=set(SAMPLES))
     params:
         annotation=GTF
     output: 'mapped/featureCounts/fcounts.tsv'
@@ -182,7 +153,7 @@ rule format_fcounts:
     output: 'mapped/featureCounts/fcounts.noversion.tsv'
 
 rule run_picardmetrics:
-    input: 'mapped/merged_bams/{sample}.bam'
+    input: 'mapped/bams/{sample}.bam'
     output: 'mapped/bam_metrics/{sample}.metrics'
     shell:
         r'''
@@ -191,7 +162,7 @@ rule run_picardmetrics:
         '''
 
 rule run_deseq:
-    input: expand('mapped/counts_strict/byExon/{sample}.counts.noversion.tsv', sample=SAMPLE_NAMES_U)
+    input: expand('mapped/counts_strict/byExon/{sample}.counts.noversion.tsv', sample=SAMPLES)
     output:
         'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.all.tsv',
         'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.sig.tsv'
@@ -228,7 +199,6 @@ rule run_deseq_featureCounts:
 
         '''
 
-
 rule create_insertsize_tsv:
     input: 'mapped/bam_metrics/{sample}.metrics'
     output: 'mapped/bam_metrics/{sample}.insertsizes.tsv'
@@ -237,15 +207,16 @@ rule create_insertsize_tsv:
         python {SRC_DIR}/collect_picard_metrics.py {input} {output}
 
         '''
+
 rule counts_to_tpm:
     input:
-        count = expand('mapped/counts_strict/byExon/{sample}.counts.noversion.tsv', sample=SAMPLE_NAMES),
-        insert_size = expand('mapped/bam_metrics/{sample}.insertsizes.tsv', sample=SAMPLE_NAMES),
-    output: 
+        count = expand('mapped/counts_strict/byExon/{sample}.counts.noversion.tsv', sample=SAMPLES),
+        insert_size = expand('mapped/bam_metrics/{sample}.insertsizes.tsv', sample=SAMPLES),
+    output:
         'mapped/tpm/masterTPM.tsv'
     params:
         gene_lengths=GENE_LENGTHS,
-        name=expand('{sample}', sample=SAMPLE_NAMES),
+        name=expand('{sample}', sample=SAMPLES),
         outprefix='mapped/tpm',
         gene_map=GENE_NAMES
     run:
@@ -265,7 +236,7 @@ rule plot_tpm:
         '''
 
 rule perform_qualimap_qc:
-    input:  'mapped/merged_bams/{sample}.bam',
+    input:  'mapped/bams/{sample}.bam',
     output: 'mapped/post_mapping_qualimap/{sample}/qualimapReport.html',
     params:
         outdir='mapped/post_mapping_qualimap/{sample}',
@@ -277,7 +248,7 @@ rule perform_qualimap_qc:
         '''
 
 rule get_duplication_estimate:
-    input:  'mapped/merged_bams/{sample}.bam'
+    input:  'mapped/bams/{sample}.bam'
     output: 'mapped/post_mapping_deduplication/{sample}/output.DupRate_plot.r'
     params:
         outprefix='mapped/post_mapping_deduplication/{sample}/output'
@@ -288,10 +259,10 @@ rule get_duplication_estimate:
 
 rule run_multiqc:
     input:
-        expand('qc/{sample_name}_{lane}_R1_001_fastqc.html', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
-        expand('mapped/post_mapping_deduplication/{sample}/output.DupRate_plot.r', sample=SAMPLE_NAMES),
-        expand('mapped/post_mapping_qualimap/{sample}/qualimapReport.html', sample=SAMPLE_NAMES),
-        expand('mapped/merged_bams/{sample}.bam', sample=SAMPLE_NAMES),
+        expand('qc/{sample_name}_fastqc.html', sample_name=SAMPLES),
+        expand('mapped/post_mapping_deduplication/{sample}/output.DupRate_plot.r', sample=SAMPLES),
+        expand('mapped/post_mapping_qualimap/{sample}/qualimapReport.html', sample=SAMPLES),
+        expand('mapped/bams/{sample}.bam', sample=SAMPLES),
         'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.sig.tsv',
         'mapped/DE_analysis/featureCounts/'+GENOME_BUILD+'.featureCounts.DESeq2.sig.tsv',
     output:
