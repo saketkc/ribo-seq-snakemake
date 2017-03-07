@@ -26,12 +26,12 @@ rule all:
     input:
         STAR_INDEX,
         expand('qc/{sample_name}_{lane}_R1_001_fastqc.html', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
+        expand('inferred_experiment/{sample}.txt', sample=SAMPLE_NAMES),
         expand('preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_trimmed.fq.gz', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
         expand('mapped/bams/{sample_name}/{sample_name}_{lane}.bam', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
         expand('mapped/merged_bams/{sample_name}.bam', sample_name=SAMPLE_NAMES),
         expand('mapped/counts_strict/byExon/{sample}.exon.counts.tsv', sample=SAMPLE_NAMES),
         expand('mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLE_NAMES),
-        #'mapped/tpm/masterTPM.tsv',
         'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.all.tsv',
         'mapped/DE_analysis/featureCounts/'+GENOME_BUILD+'.featureCounts.DESeq2.sig.tsv',
         'multiqc_report/multiqc_report.html',
@@ -63,37 +63,6 @@ rule perfom_trimming:
             trim_galore -o {params.out_dir} -q {params.phred_cutoff} {input.R1}
         '''
 
-"""
-rule map_starlong:
-    input:
-        R1='preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz',
-        R2='preprocessed/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz',
-        index=STAR_INDEX
-    output: 'mapped/bams/{sample_name}/{sample_name}_{lane}.bam'
-    params:
-        prefix = 'mapped/bams/{sample_name}_{lane}',
-        unmapped = 'unmapped/fastq/{sample_name}_{lane}',
-        starlogs = 'mapped/starlogs'
-    threads: 16
-    shell:
-        r'''
-        STARlong --runThreadN {threads}\
-             --genomeDir {input.index}\
-             --outFileNamePrefix {params.prefix} --readFilesIn {input.R1} {input.R2}\
-             --outSAMtype BAM SortedByCoordinate\
-             --readFilesCommand zcat\
-             --outReadsUnmapped {params.unmapped}\
-            --outFilterMultimapScoreRange 20\
-            --outFilterScoreMinOverLread 0\
-            --outFilterMatchNminOverLread 0.66\
-            --outFilterMismatchNmax 100\
-            --winAnchorMultimapNmax 200\
-            --seedPerReadNmax 100000 --seedPerWindowNmax 100\
-            && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} &&\
-            mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out\
-            {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
-        '''
-"""
 rule map_star:
     input:
         R1='preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_trimmed.fq.gz',
@@ -139,7 +108,7 @@ rule count_exon:
     output: 'mapped/counts_strict/byExon/{sample}.exon.counts.tsv'
     shell:
         r'''
-        source activate clipseq2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded={HTSEQ_STRANDED} --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}
+        source activate clipseq2 && htseq-count --order=name --format=bam --mode={HTSEQ_MODE} --stranded={HTSEQ_STRANDED} --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}
         '''
 
 rule count_cds:
@@ -150,7 +119,7 @@ rule count_cds:
     output: 'mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv'
     shell:
         r'''
-        source activate clipseq2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded={HTSEQ_STRANDED} --minaqual={params.phred_cutoff} --type=CDS --idattr=gene_id {input} {params.annotation} > {output}
+        source activate clipseq2 && htseq-count --order=name --format=bam --mode={HTSEQ_MODE} --stranded={HTSEQ_STRANDED} --minaqual={params.phred_cutoff} --type=CDS --idattr=gene_id {input} {params.annotation} > {output}
         '''
 
 rule format_counts:
@@ -169,7 +138,7 @@ rule featurecounts:
     output: 'mapped/featureCounts/fcounts.tsv'
     threads: 16
     shell:
-        r'''featureCounts -s 1 -a {params.annotation} -o {output} -t exon -g gene_id -Q 4 -T {threads} {input}'''
+        r'''featureCounts {FEATURECOUNTS_S} -a {params.annotation} -o {output} -t exon -g gene_id -Q 4 -T {threads} {input}'''
 
 rule format_fcounts:
     input: 'mapped/featureCounts/fcounts.tsv'
@@ -286,12 +255,21 @@ rule get_duplication_estimate:
         source activate clipseq2 && read_duplication.py -i {input} -o {params.outprefix}
         '''
 
+rule infer_experiment:
+    input: 'mapped/merged_bams/{sample}.bam'
+    output: 'inferred_experiment/{sample}.txt'
+    shell:
+        r'''
+        source activate clipseq2 && infer_experiment.py -r {GENE_BED} -i {input} 2>&1 > {output} 
+        '''
+
 rule run_multiqc:
     input:
         expand('qc/{sample_name}_{lane}_R1_001_fastqc.html', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
         expand('mapped/post_mapping_deduplication/{sample}/output.DupRate_plot.r', sample=SAMPLE_NAMES),
         expand('mapped/post_mapping_qualimap/{sample}/qualimapReport.html', sample=SAMPLE_NAMES),
         expand('mapped/merged_bams/{sample}.bam', sample=SAMPLE_NAMES),
+        expand('inferred_experiment/{sample}.txt', sample=SAMPLE_NAMES),
         'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.sig.tsv',
         'mapped/DE_analysis/featureCounts/'+GENOME_BUILD+'.featureCounts.DESeq2.sig.tsv',
     output:

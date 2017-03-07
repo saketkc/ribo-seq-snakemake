@@ -1,7 +1,7 @@
 include:
-    'configs/config_HuR_GSE62134.mouse.py'
+    #'configs/config_HuR_GSE62134.mouse.py'
     #'configs/config_MSI2.GSE71333.mouse.py'
-    #'configs/config_HuR_Penalva_L_01182017.human.py'
+    'configs/config_HuR_Penalva_L_01182017.human.py'
 
 workdir: OUT_DIR
 
@@ -15,15 +15,13 @@ SAMPLES = sorted([sample.replace('{}/'.format(RAWDATA_DIR),'').replace('.sra',''
 
 rule all:
     input:
-        STAR_INDEX,
         #expand('qc/{sample_name}_fastqc.html', sample_name=SAMPLES),
         expand('sratofastq/{sample}.fastq.gz', sample=SAMPLES),
         expand('inferred_experiment/{sample}.txt', sample=SAMPLES),
         expand('preprocessed/{sample_name}_trimmed.fq.gz', sample_name=SAMPLES),
         expand('mapped/bams/{sample_name}.bam', sample_name=SAMPLES),
         expand('mapped/counts_strict/byExon/{sample}.exon.counts.tsv', sample=SAMPLES),
-        #expand('mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLES),
-        #'mapped/tpm/masterTPM.tsv',
+        expand('mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLES),
         'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.all.tsv',
         'mapped/DE_analysis/featureCounts/'+GENOME_BUILD+'.featureCounts.DESeq2.sig.tsv',
         'multiqc_report/multiqc_report.html',
@@ -151,7 +149,7 @@ rule featurecounts:
     output: 'mapped/featureCounts/fcounts.tsv'
     threads: 16
     shell:
-        r'''featureCounts {FEATURECOUNTS_S} -a {params.annotation} -o {output} -t exon -g gene_id -Q 4 -T {threads} {input}'''
+        r'''featureCounts {FEATURECOUNTS_S} -a {params.annotation} -o {output} -t {FEATURECOUNTS_T} -g gene_id -Q 4 -T {threads} {input}'''
 
 rule format_fcounts:
     input: 'mapped/featureCounts/fcounts.tsv'
@@ -163,7 +161,7 @@ rule format_fcounts:
         '''
     output: 'mapped/featureCounts/fcounts.noversion.tsv'
 
-rule run_picardmetrics:
+rule run_picardmetricsu
     input: 'mapped/bams/{sample}.bam'
     output: 'mapped/bam_metrics/{sample}.metrics'
     shell:

@@ -10,3 +10,7 @@ GENE_NAMES = GENOMES_DIR + '/' + GENOME_BUILD + '/annotation/' + GENOME_BUILD+'_
 GENE_LENGTHS = GENOMES_DIR + '/' + GENOME_BUILD + '/annotation/' + 'gencode.v25.coding_lengths.tsv'  #+ GENOME_BUILD+'_gene_lengths.tsv'
 DESIGN_FILE = RAWDATA_DIR + '/' + 'design.txt'
 HTSEQ_STRANDED = 'yes'
+FEATURECOUNTS_S = '-s 1'
+GENE_BED = GENOMES_DIR + '/' + GENOME_BUILD + '/annotation/' + 'gencode.24.genes.bed'  #+ GENOME_BUILD+'_gene_lengths.tsv'
+FEATURECOUNTS_T='cds'
+HTSEQ_MODE='union'
