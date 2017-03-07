@@ -31,7 +31,7 @@ rule all:
         expand('mapped/merged_bams/{sample_name}.bam', sample_name=SAMPLE_NAMES),
         expand('mapped/counts_strict/byExon/{sample}.exon.counts.tsv', sample=SAMPLE_NAMES),
         expand('mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLE_NAMES),
-        'mapped/tpm/masterTPM.tsv',
+        #'mapped/tpm/masterTPM.tsv',
         'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.all.tsv',
         'mapped/DE_analysis/featureCounts/'+GENOME_BUILD+'.featureCounts.DESeq2.sig.tsv',
         'multiqc_report/multiqc_report.html',
@@ -139,7 +139,7 @@ rule count_exon:
     output: 'mapped/counts_strict/byExon/{sample}.exon.counts.tsv'
     shell:
         r'''
-        source activate clipseq2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded=no --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}
+        source activate clipseq2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded={HTSEQ_STRANDED} --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}
         '''
 
 rule count_cds:
@@ -150,7 +150,7 @@ rule count_cds:
     output: 'mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv'
     shell:
         r'''
-        source activate clipseq2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded=no --minaqual={params.phred_cutoff} --type=CDS --idattr=gene_id {input} {params.annotation} > {output}
+        source activate clipseq2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded={HTSEQ_STRANDED} --minaqual={params.phred_cutoff} --type=CDS --idattr=gene_id {input} {params.annotation} > {output}
         '''
 
 rule format_counts:
@@ -169,7 +169,7 @@ rule featurecounts:
     output: 'mapped/featureCounts/fcounts.tsv'
     threads: 16
     shell:
-        r'''featureCounts -a {params.annotation} -o {output} -t exon -g gene_id -Q 4 -T {threads} {input}'''
+        r'''featureCounts -s 1 -a {params.annotation} -o {output} -t exon -g gene_id -Q 4 -T {threads} {input}'''
 
 rule format_fcounts:
     input: 'mapped/featureCounts/fcounts.tsv'
