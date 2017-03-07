@@ -77,6 +77,7 @@ rule map_star:
         r'''
         STAR --runThreadN {threads}\
              --genomeDir {input.index}\
+             --outFilterMismatchNmax 2\
              --outFileNamePrefix {params.prefix} --readFilesIn {input.R1}\
              --outSAMtype BAM SortedByCoordinate\
              --readFilesCommand zcat\
