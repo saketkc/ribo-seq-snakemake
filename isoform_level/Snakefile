@@ -1,0 +1,179 @@
+include:
+    '../configs/config_HuR_Penalva_L_01182017.human.isoformlevel.py'
+
+rule all:
+    CDS_RANGE,
+    STAR_INDEX_DIR+'/contaminant/fasta/contaminant.fa'
+
+
+rule cds_range_file:
+    input:
+        gtf = GTF,
+        cdna_fa = cDNA_FASTA,
+        cds_fa = CDS_FASTA,
+    output:
+        CDS_RANGE_FILE
+    shell:
+        r'''source activate clipseq2 && python {SRC_DIR}/third-party/ribomap/filter_gencode_transcripts.py {input.gtf} {input.cdna_fa} {input.cds_fa}'''
+
+
+rule build_contaminants:
+    input:
+        gtf = GTF,
+        cdna_fa = cDNA_FASTA,
+        ncrna_fa = ncRNA_FASTA,
+        trna_fa = tRNA_FASTA,
+    output:
+        STAR_INDEX_DIR+'/contaminant/fasta/contaminant.fa'
+    shell:
+        r'''source activate clipseq2 && python {SRC_DIR}/third-party/ribomap/build_contaminant.py {input.ncrna_fa} {input.trna_fa} Homo_Sapeins {output}'''
+
+rule index_contaminant:
+    input: STAR_INDEX_DIR+'/contaminant/fasta/contaminant.fa'
+    output: STAR_INDEX_DIR+'/contaminant/index/'
+    threads: 16
+    run:
+        r'''STAR --runThreadN {threads} --runMode genomeGenerate  \
+           --genomeDir {output} --genomeFastaFiles ${input} \
+           --genomeSAindexNbases 8 --genomeChrBinNbits 11
+        '''
+
+rule index_cdna:
+    input: cDNA_FASTA
+    output: STAR_INDEX_DIR + '/cDNA/index'
+    threads: 16
+    run:
+        r'''STAR --runThreadN {threads} --runMode genomeGenerate  \
+           --genomeDir {output} --genomeFastaFiles ${input} \
+           --genomeSAindexNbases 8 --genomeChrBinNbits 11
+        '''
+
+rule perform_qc_ribo:
+    input:
+        R1=RAWDATA_DIR_RIBO+'/{sample_name}_{lane}_R1_001.fastq.gz',
+    params:
+        out_dir = 'qc/ribo'
+    output:
+       'qc/ribo/{sample_name}_{lane}_R1_001_fastqc.html',
+       'qc/ribo/{sample_name}_{lane}_R1_001_fastqc.zip',
+    shell:
+        r'''
+            fastqc -o {params.out_dir} -f fastq {input.R1}
+        '''
+
+rule perfom_trimming_ribo:
+    input:
+        R1=RAWDATA_DIR_RIBO+'/ribo/{sample_name}_{lane}_R1_001.fastq.gz',
+    params:
+        out_dir='preprocessed/ribo/{sample_name}',
+        phred_cutoff=5
+    output:
+        'preprocessed/ribo/{sample_name}/{sample_name}_{lane}_R1_001_trimmed.fq.gz',
+    shell:
+        r'''
+            trim_galore -o {params.out_dir} -q {params.phred_cutoff} {input.R1}
+        '''
+
+rule map_to_tx_ribo:
+    input:
+        R1='preprocessed/rna/{sample_name}_{lane}_R1_001_trimmed.fq.gz',
+        t_idx = STAR_INDEX_DIR + '/cDNA/index',
+    output:
+    params:
+        prefix = 'mapped/bams/rna/{sample}',
+        starlogs = 'mapped/starlogs'
+    threads: 16
+    shell:
+        r'''STAR --runThreadN {threads} --genomeDir ${input.index} \
+            --readFilesIn {input.R1} \
+            --readFilesCommand zcat \
+            --outSAMtype BAM SortedByCoordinate \
+            --outFileNamePrefix  {params.prefix} \
+            && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} &&\
+            mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
+        '''
+
+
+rule perform_qc_rna:
+    input:
+        R1=RAWDATA_DIR+'/{sample_name}_{lane}_R1_001.fastq.gz',
+        R2=RAWDATA_DIR+'/{sample_name}_{lane}_R2_001.fastq.gz'
+    params:
+        out_dir = 'qc'
+    output:
+       'qc/{sample_name}_{lane}_R1_001_fastqc.html',
+       'qc/{sample_name}_{lane}_R1_001_fastqc.zip',
+       'qc/{sample_name}_{lane}_R2_001_fastqc.html',
+       'qc/{sample_name}_{lane}_R2_001_fastqc.zip',
+    shell:
+        r'''
+            fastqc -o {params.out_dir} -f fastq {input.R1} {input.R2}
+        '''
+
+rule perfom_trimming_rna:
+    input:
+        R1=RAWDATA_DIR+'/{sample_name}_{lane}_R1_001.fastq.gz',
+        R2=RAWDATA_DIR+'/{sample_name}_{lane}_R2_001.fastq.gz'
+    params:
+        out_dir='preprocessed/{sample_name}',
+        phred_cutoff=5
+    output:
+        'preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz',
+        'preprocessed/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz',
+    shell:
+        r'''
+            trim_galore --paired -o {params.out_dir} -q {params.phred_cutoff} {input.R1} {input.R2}
+        '''
+
+
+rule map_to_tx_rna:
+    input:
+        R1='preprocessed/rna/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz',
+        R2='preprocessed/rna/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz',
+        t_idx = STAR_INDEX_DIR + '/cDNA/index',
+    output:
+    params:
+        prefix = 'mapped/bams/rna/{sample}',
+        starlogs = 'mapped/starlogs'
+    threads: 16
+    shell:
+        r'''STAR --runThreadN {threads} --genomeDir ${input.index} \
+            --readFilesIn {input.R1} {input.R2}\
+            --readFilesCommand zcat \
+            --outSAMtype BAM SortedByCoordinate \
+            --outFileNamePrefix  {params.prefix} \
+            && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} &&\
+            mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
+        '''
+
+rule merge_bams:
+    input: expand('mapped/bams/rna/{{sample_name}}/{{sample_name}}_{lane}.bam', lane=set(RNA_LANE_NAMES))
+    output: 'mapped/merged_bams/rna/{sample_name}.bam'
+    run:
+        cmd = ' -in '.join(input)
+        shell(r'''bamtools merge -in {cmd} -out {output}''')
+
+rule run_salmon:
+    input:
+        transcript=cDNA_FASTA,
+        bam = 'mapped/merged_bams/rna/{sample_name}.bam'
+    params:
+        outdir='mapped/quant/'
+    output:
+        'mapped/quant/quant.sf'
+    threads: 16
+    shell:
+        r'''
+        salmon quant -t {input.transcript} -l U -a {input.bam} -o {params.outdir} -p {threads} --biasCorrect
+        '''
+
+
+rule run_ribomap:
+    input:
+        rna = expand('mapped/merged_bams/rna/{sample}.bam', sample=SAMPLE_NAMES_RNA)
+        ribo = expand('mapped/bams/ribo/{sample}.bam', sample=SAMPLE_NAMES_RIBO)
+    output: expand('riboprof/{rna}_{ribo}', zip, rna=SAMPLE_NAMES_RNA, SAMPLE_NAMES_RIBO)
+
+    run:
+        for x,y,o in zip(input.rna, input.ribo, output):
+            shell('''riboprof --fasta {cDNA_FASTA} --mrnabam {x} --ribobam {y} --min_fplen=22 --max_fplen=33 --offset 12 --sf {input.sf} --tabd_cutoff 0 --out {o}''')
