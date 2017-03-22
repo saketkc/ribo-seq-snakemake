@@ -28,11 +28,11 @@ rule all:
         expand('qc/rna/{sample_name}_{lane}_R2_001_fastqc.html', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
-        expand('unmapped/rna/{sample_name}_{lane}.R1.fq', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
-        expand('unmapped/rna/{sample_name}_{lane}.R2.fq', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
+        #expand('unmapped/rna/{sample_name}_{lane}.R1.fq', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
+        #expand('unmapped/rna/{sample_name}_{lane}.R2.fq', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         expand('mapped/bams/rna/{sample_name}/{sample_name}_{lane}.bam', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         expand('mapped/merged_bams/rna/{sample_name}.bam', sample_name=SAMPLE_NAMES_RNA),
-        expand('qc/ribo/{sample_name}_R1_001_fastqc.html', sample_name=SAMPLE_NAMES_RIBO),
+        expand('qc/ribo/{sample_name}_L004_R1_001_fastqc.html', sample_name=SAMPLE_NAMES_RIBO),
         expand('preprocessed/ribo/{sample_name}_L004_R1_001_trimmed.fq.gz', sample_name=SAMPLE_NAMES_RIBO),
         #expand('mapped/bams/ribo/{sample_name}.bam', sample_name=SAMPLE_NAMES_RIBO),
 
@@ -90,8 +90,8 @@ rule perform_qc_ribo:
     params:
         out_dir = 'qc/ribo'
     output:
-       'qc/ribo/{sample_name}_R1_001_fastqc.html',
-       'qc/ribo/{sample_name}_R1_001_fastqc.zip',
+       'qc/ribo/{sample_name}_L004_R1_001_fastqc.html',
+       'qc/ribo/{sample_name}_L004_R1_001_fastqc.zip',
     shell:
         r'''
             fastqc -o {params.out_dir} -f fastq {input.R1}
@@ -190,40 +190,65 @@ rule filter_contaminant_rna:
         R1='unmapped/rna/{sample_name}_{lane}.R1.fq',
         R2='unmapped/rna/{sample_name}_{lane}.R2.fq',
     params:
-        prefix='unmapped/rna/'
-
+        prefix='unmapped/rna/{sample_name}_{lane}'
     threads: 16
     shell:
         r'''
             STAR --runThreadN {threads} --genomeDir {input.cont_idx} \
                 --readFilesCommand zcat \
                 --readFilesIn {input.R1} {input.R2} --outFileNamePrefix {params.prefix} \
-                --outStd SAM --outReadsUnmapped Fastx \
-            && mv {params.prefix}Unmapped.out.mate1 {output.R1} && mv {params.prefix}Unmapped.out.mate2 {output.R2}\
-
+                --outStd SAM --outReadsUnmapped Fastx --outSAMmode NoQS  > /dev/null \
+            && mv {params.prefix}Unmapped.out.mate1 {output.R1} && mv {params.prefix}Unmapped.out.mate2 {output.R2}
         '''
 
 
+"""
 rule map_to_tx_rna:
     input:
         R1='unmapped/rna/{sample_name}_{lane}.R1.fq',
         R2='unmapped/rna/{sample_name}_{lane}.R2.fq',
-        t_idx = STAR_INDEX_DIR + '/pcDNA/index',
+        index = STAR_INDEX_DIR + '/pcDNA/index',
     output: 'mapped/bams/rna/{sample_name}/{sample_name}_{lane}.bam',
     params:
-        prefix = 'mapped/bams/rna/{sample_name}',
-        starlogs = 'mapped/starlogs'
+        prefix = 'mapped/bams/rna/{sample_name}_{lane}',
+        starlogs = 'mapped/starlogs',
+        tmp_prefix = '/staging/as/skchoudh/tmp/{sample_name}_{lane}'
     threads: 16
     shell:
-        r'''STAR --runThreadN {threads} --genomeDir ${input.index} \
+        r'''STAR --runThreadN {threads} --genomeDir {input.index} \
             --readFilesIn {input.R1} {input.R2}\
             --readFilesCommand zcat \
             --outSAMtype BAM SortedByCoordinate \
             --outFileNamePrefix  {params.prefix} \
+            --outTmpDir {params.tmp_prefix} \
+            && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} &&\
+            mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
+        '''
+"""
+
+rule map_to_tx_rna:
+    input:
+        R1='preprocessed/rna/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz',
+        R2='preprocessed/rna/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz',
+        index = STAR_INDEX_DIR + '/pcDNA/index',
+    output: 'mapped/bams/rna/{sample_name}/{sample_name}_{lane}.bam',
+    params:
+        prefix = 'mapped/bams/rna/{sample_name}_{lane}',
+        starlogs = 'mapped/starlogs',
+        tmp_prefix = '/staging/as/skchoudh/tmp/{sample_name}_{lane}'
+    threads: 16
+    shell:
+        r'''STAR --runThreadN {threads} --genomeDir {input.index} \
+            --readFilesIn {input.R1} {input.R2}\
+            --readFilesCommand zcat \
+            --outSAMtype BAM SortedByCoordinate \
+            --outFileNamePrefix  {params.prefix} \
+            --outTmpDir {params.tmp_prefix} \
             && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} &&\
             mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
         '''
 
+#"""
 rule merge_bams:
     input: expand('mapped/bams/rna/{{sample_name}}/{{sample_name}}_{lane}.bam', lane=set(LANE_NAMES_RNA))
     output: 'mapped/merged_bams/rna/{sample_name}.bam'
