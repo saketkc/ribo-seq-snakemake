@@ -13,9 +13,11 @@ FEATURECOUNTS_S = '-s 1'
 GENE_BED = GENOMES_DIR + '/' + GENOME_BUILD + '/annotation/' + 'gencode.24.genes.bed'  #+ GENOME_BUILD+'_gene_lengths.tsv'
 FEATURECOUNTS_T='cds'
 HTSEQ_MODE='union'
+
 cDNA_FASTA = GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.transcripts.fa'
 pcDNA_FASTA = GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.pc_transcripts.fa'
-CDS_FASTA =  GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.pc_translations.fa'
+protein_FASTA =  GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.pc_translations.fa'
+
 tRNA_FASTA = GENOMES_DIR + '/tRNA_eukaryotic/eukaryotic-tRNAs.fa'
 ncRNA_FASTA = GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.lncRNA_transcripts.fa'
 STAR_INDEX_DIR = GENOMES_DIR + '/' + GENOME_BUILD + '/star_index'
@@ -28,3 +30,5 @@ CDS_RANGE_FILE =  GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.pc_t
 pcDNA_FASTA_FILTERED = GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.pc_transcripts_filter.fa'
 CDS_FASTA_FILTERED = GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.pc_transaltions_filter.fa'
 
+
+CONTAMINANT_FASTA = STAR_INDEX_DIR+'/contaminant/fasta/contaminant.fa'

@@ -17,6 +17,7 @@ SAMPLE_NAMES_RIBO = ['HepG2_Control_1_S19',
                      'HepG2_HuR_KD_6_S24']
 
 print(RAWDATA_DIR_RNA)
+ALIGN_PARAMS = ' --seedSearchLmax 10 --outFilterMultimapScoreRange 0 --outFilterMultimapNmax 255 --outFilterMismatchNmax 2 --outFilterIntronMotifs RemoveNoncanonical'
 
 rule all:
     input:
@@ -26,29 +27,54 @@ rule all:
         STAR_INDEX_DIR + '/pcDNA/index',
         expand('qc/rna/{sample_name}_{lane}_R1_001_fastqc.html', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         expand('qc/rna/{sample_name}_{lane}_R2_001_fastqc.html', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
+        expand('qc/ribo/{sample_name}_L004_R1_001_fastqc.html', sample_name=SAMPLE_NAMES_RIBO),
         expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
+        expand('preprocessed/ribo/{sample_name}_L004_R1_001_trimmed.fq.gz', sample_name=SAMPLE_NAMES_RIBO),
+        #OUT_DIR + '/ribomap_results/xxx.codon',
         #expand('unmapped/rna/{sample_name}_{lane}.R1.fq', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         #expand('unmapped/rna/{sample_name}_{lane}.R2.fq', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
+        #expand('unmapped/ribo/{sample_name}.R1.fq', sample_name=SAMPLE_NAMES_RIBO),
         expand('mapped/bams/rna/{sample_name}/{sample_name}_{lane}.bam', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         expand('mapped/merged_bams/rna/{sample_name}.bam', sample_name=SAMPLE_NAMES_RNA),
-        expand('qc/ribo/{sample_name}_L004_R1_001_fastqc.html', sample_name=SAMPLE_NAMES_RIBO),
-        expand('preprocessed/ribo/{sample_name}_L004_R1_001_trimmed.fq.gz', sample_name=SAMPLE_NAMES_RIBO),
+        expand('mapped/bams/ribo/{sample_name}.bam', sample_name=SAMPLE_NAMES_RIBO),
+        expand('mapped/quant/{sample_name}/quant.sf', sample_name=SAMPLE_NAMES_RNA),
+        expand('riboprof/{rna}_{ribo}', zip, rna=SAMPLE_NAMES_RNA, ribo=SAMPLE_NAMES_RIBO)
+        #expand('riboprof/{rna}_{ribo}', zip, rna=SAMPLE_NAMES_RNA, ribo=SAMPLE_NAMES_RIBO)
         #expand('mapped/bams/ribo/{sample_name}.bam', sample_name=SAMPLE_NAMES_RIBO),
 
+
+rule run_riboprof_script:
+    input:
+        ribo_fq = RAWDATA_DIR_RIBO+'/{sample_name}_L004_R1_001.fastq.gz',
+        rna_fq = RAWDATA_DIR_RNA+'/merged_fq/{sample_name}_'
+    output: OUT_DIR + '/ribomap_results/xxx.codon'
+    shell:
+        r'''source activate clipseq2 && bash {SRC_DIR}/third-party/ribomap/run_ribomap.sh \
+            --rnaseq_fq {input.rna_fq} \
+            --riboseq_fq {input.ribo_fq} \
+            --transcript_fa {cDNA_FILTERED_FASTA} \
+            --contaminant_fa {CONTAMINANT_FASTA} \
+            --cds_range {CDS_RANGE_FILE} \
+            --min_fplen 27 \
+            --max_fplen 33 \
+            --offset 12 \
+            --nproc 16 \
+            --work_dir {OUT_DIR}/ribomap_results
+        '''
 
 
 rule cds_range_file:
     input:
         gtf = GTF,
         cdna_fa = pcDNA_FASTA,
-        cds_fa = CDS_FASTA,
+        protein_fa = protein_FASTA,
     output: 
         CDS_RANGE_FILE,
         pcDNA_FASTA_FILTERED,
         CDS_FASTA_FILTERED
     shell:
-        r'''source activate clipseq2 && python {SRC_DIR}/third-party/ribomap/filter_gencode_transcript.py {input.gtf} {input.cdna_fa} {input.cds_fa}'''
+        r'''source activate clipseq2 && python {SRC_DIR}/third-party/ribomap/filter_gencode_transcript.py {input.gtf} {input.cdna_fa} {input.protein_fa}'''
 
 
 rule build_contaminants:
@@ -112,35 +138,57 @@ rule perfom_trimming_ribo:
 
 rule filter_contaminant_ribo:
     input:
-        R1='preprocessed/ribo/{sample_name}/{sample_name}_L004_R1_001_trimmed.fq.gz',
+        R1='preprocessed/ribo/{sample_name}_L004_R1_001_trimmed.fq.gz',
         cont_idx = STAR_INDEX_DIR+'/contaminant/index/'
     output:
-        R1='unmapped/ribo/{sample}.R1.fq',
+        R1='unmapped/ribo/{sample_name}.R1.fq',
     params:
-        prefix='unmapped/ribo/{sample}'
+        prefix='unmapped/ribo/{sample_name}'
 
     threads: 16
     shell:
         r'''
             STAR --runThreadN {threads} --genomeDir {input.cont_idx} \
                 --readFilesCommand zcat \
-                --readFilesIn {input} --outFileNamePrefix {params.outprefix} \
-                --outStd SAM --outReadsUnmapped Fastx \
+                {ALIGN_PARAMS} \
+                --readFilesIn {input.R1} --outFileNamePrefix {params.prefix} \
+                --outStd SAM --outReadsUnmapped Fastx --outSAMmode NoQS  > /dev/null \
             && mv {params.prefix}Unmapped.out.mate1 {output.R1}
 
         '''
 
+"""
 rule map_to_tx_ribo:
     input:
         R1='unmapped/ribo/{sample}.R1.fq',
         t_idx = STAR_INDEX_DIR + '/pcDNA/index',
-    output:
+    output: 'mapped/bams/ribo/{sample}.bam',
     params:
-        prefix = 'mapped/bams/rna/{sample}',
+        prefix = 'mapped/bams/ribo/{sample}',
         starlogs = 'mapped/starlogs'
     threads: 16
     shell:
-        r'''STAR --runThreadN {threads} --genomeDir ${input.index} \
+        r'''STAR --runThreadN {threads} --genomeDir {input.index} \
+            --readFilesIn {input.R1} \
+            --readFilesCommand zcat \
+            --outSAMtype BAM SortedByCoordinate \
+            --outFileNamePrefix  {params.prefix} \
+            && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} &&\
+            mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
+        '''
+"""
+
+rule map_to_tx_ribo:
+    input:
+        index = STAR_INDEX_DIR + '/pcDNA/index',
+        R1=RAWDATA_DIR_RIBO+'/{sample_name}_L004_R1_001.fastq.gz',
+    output: 'mapped/bams/ribo/{sample_name}.bam',
+    params:
+        prefix = 'mapped/bams/ribo/{sample_name}',
+        starlogs = 'mapped/starlogs'
+    threads: 16
+    shell:
+        r'''STAR --runThreadN {threads} --genomeDir {input.index} \
             --readFilesIn {input.R1} \
             --readFilesCommand zcat \
             --outSAMtype BAM SortedByCoordinate \
@@ -196,6 +244,7 @@ rule filter_contaminant_rna:
         r'''
             STAR --runThreadN {threads} --genomeDir {input.cont_idx} \
                 --readFilesCommand zcat \
+                {ALIGN_PARAMS} \
                 --readFilesIn {input.R1} {input.R2} --outFileNamePrefix {params.prefix} \
                 --outStd SAM --outReadsUnmapped Fastx --outSAMmode NoQS  > /dev/null \
             && mv {params.prefix}Unmapped.out.mate1 {output.R1} && mv {params.prefix}Unmapped.out.mate2 {output.R2}
@@ -249,6 +298,7 @@ rule map_to_tx_rna:
         '''
 
 #"""
+
 rule merge_bams:
     input: expand('mapped/bams/rna/{{sample_name}}/{{sample_name}}_{lane}.bam', lane=set(LANE_NAMES_RNA))
     output: 'mapped/merged_bams/rna/{sample_name}.bam'
@@ -256,27 +306,27 @@ rule merge_bams:
         cmd = ' -in '.join(input)
         shell(r'''bamtools merge -in {cmd} -out {output}''')
 
+
 rule run_salmon:
-    input:
-        transcript=pcDNA_FASTA,
-        bam = 'mapped/merged_bams/rna/{sample_name}.bam'
+    input: 'mapped/merged_bams/rna/{sample_name}.bam'
     params:
-        outdir='mapped/quant/'
+        outdir='mapped/quant/{sample_name}'
     output:
-        'mapped/quant/quant.sf'
+        'mapped/quant/{sample_name}/quant.sf'
     threads: 16
     shell:
         r'''
-        salmon quant -t {input.transcript} -l U -a {input.bam} -o {params.outdir} -p {threads} --biasCorrect
+        salmon quant -t {pcDNA_FASTA_FILTERED} -l U -a {input} -o {params.outdir} -p {threads} --seqBias
         '''
 
 
 rule run_ribomap:
     input:
-        rna = expand('mapped/merged_bams/rna/{sample}.bam', sample=SAMPLE_NAMES_RIBO),
-        ribo = expand('mapped/bams/ribo/{sample}.bam', sample=SAMPLE_NAMES_RIBO)
+        rna = expand('mapped/merged_bams/rna/{sample_name}.bam', sample_name=SAMPLE_NAMES_RNA),
+        ribo = expand('mapped/bams/ribo/{sample_name}.bam', sample_name=SAMPLE_NAMES_RIBO),
+        sf = expand('mapped/quant/{sample_name}/quant.sf', sample_name=SAMPLE_NAMES_RNA),
     output: expand('riboprof/{rna}_{ribo}', zip, rna=SAMPLE_NAMES_RNA, ribo=SAMPLE_NAMES_RIBO)
 
     run:
-        for x,y,o in zip(input.rna, input.ribo, output):
-            shell('''riboprof --fasta {pcDNA_FASTA} --mrnabam {x} --ribobam {y} --min_fplen=22 --max_fplen=33 --offset 12 --sf {input.sf} --tabd_cutoff 0 --out {o}''')
+        for x,y,z,o in zip(input.rna, input.ribo, input.sf, output):
+            shell('''riboprof --mrnabam {x} --ribobam {y} --fasta {pcDNA_FASTA_FILTERED} --cds_range {CDS_RANGE_FILE} --sf {z} --tabd_cutoff 0 --offset 12 --min_fplen 22 --max_fplen 33 --out {o}''')
