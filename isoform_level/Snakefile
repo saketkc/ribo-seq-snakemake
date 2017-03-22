@@ -185,7 +185,8 @@ rule map_to_tx_ribo:
     output: 'mapped/bams/ribo/{sample_name}.bam',
     params:
         prefix = 'mapped/bams/ribo/{sample_name}',
-        starlogs = 'mapped/starlogs'
+        starlogs = 'mapped/starlogs',
+        tmp_prefix = '/staging/as/skchoudh/tmp/{sample_name}'
     threads: 16
     shell:
         r'''STAR --runThreadN {threads} --genomeDir {input.index} \
@@ -193,6 +194,7 @@ rule map_to_tx_ribo:
             --readFilesCommand zcat \
             --outSAMtype BAM SortedByCoordinate \
             --outFileNamePrefix  {params.prefix} \
+            --outTmpDir {params.tmp_prefix} \
             && mv {params.prefix}Aligned.sortedByCoord.out.bam {output} &&\
             mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
         '''
@@ -297,7 +299,6 @@ rule map_to_tx_rna:
             mkdir -p {params.starlogs} && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}Log.progress.out {params.starlogs}
         '''
 
-#"""
 
 rule merge_bams:
     input: expand('mapped/bams/rna/{{sample_name}}/{{sample_name}}_{lane}.bam', lane=set(LANE_NAMES_RNA))
