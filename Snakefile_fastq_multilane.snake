@@ -1,5 +1,5 @@
 include:
-    'configs/config_HuR_Penalva_L_01182017.human.py'
+    'configs/config_hur_penalva_l_01182017.human.py'
 
 workdir: OUT_DIR
 
