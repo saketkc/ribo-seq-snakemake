@@ -22,7 +22,7 @@ rule all:
     input:
         RSEM_INDEX_PREFIX + '.transcripts.fa',
         expand(RAWDATA_DIR_RNA+'/merged_fastq/{sample_name}_R1_001.fastq.gz', sample_name=SAMPLE_NAMES_RNA),
-        expand('mapped/{sample_name}/{sample_name}.gene.results', sample_name=SAMPLE_NAMES_RNA),
+        expand('mapped/{sample_name}/{sample_name}.genes.results', sample_name=SAMPLE_NAMES_RNA),
         #expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         #expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
 
@@ -72,6 +72,6 @@ rule quantify:
     params:
         prefix = 'mapped/{sample_name}/{sample_name}',
         tmpdir =  'mapped/tmp_dir/{sample_name}/'
-    output: 'mapped/{sample_name}/{sample_name}.gene.results'
+    output: 'mapped/{sample_name}/{sample_name}.genes.results'
     shell:
         r'''mkdir -p {OUT_DIR}/{params.tmpdir} && rsem-calculate-expression --paired-end --star --star-output-genome-bam --estimate-rspd -p {threads} {input.R1} {input.R2} {RSEM_INDEX_PREFIX} {params.prefix} --temporary-folder {OUT_DIR}/{params.tmpdir}'''
