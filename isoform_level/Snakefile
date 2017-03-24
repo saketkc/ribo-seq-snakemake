@@ -69,7 +69,7 @@ rule cds_range_file:
         gtf = GTF,
         cdna_fa = pcDNA_FASTA,
         protein_fa = protein_FASTA,
-    output: 
+    output:
         CDS_RANGE_FILE,
         pcDNA_FASTA_FILTERED,
         CDS_FASTA_FILTERED
@@ -330,4 +330,4 @@ rule run_ribomap:
 
     run:
         for x,y,z,o in zip(input.rna, input.ribo, input.sf, output):
-            shell('''riboprof --mrnabam {x} --ribobam {y} --fasta {pcDNA_FASTA_FILTERED} --cds_range {CDS_RANGE_FILE} --sf {z} --tabd_cutoff 0 --offset 12 --min_fplen 22 --max_fplen 33 --out {o}''')
+            shell('''riboprof --mrnabam {x} --ribobam {y} --fasta {pcDNA_FASTA_FILTERED} --cds_range {CDS_RANGE_FILE} --sf {z} --tabd_cutoff 0 --offset 12 --min_fplen 22 --max_fplen 33 --useSecondary --useRC --out {o}''')

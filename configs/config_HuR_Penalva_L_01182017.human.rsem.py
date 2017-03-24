@@ -1,5 +1,5 @@
 GENOMES_DIR='/home/cmb-panasas2/skchoudh/genomes'
-OUT_DIR = '/staging/as/skchoudh/rna/HuR_results/human/ribo-seq-isoform'
+OUT_DIR = '/staging/as/skchoudh/rna/HuR_results/human/ribo-seq-rsem'
 SRC_DIR = '/home/cmb-panasas2/skchoudh/github_projects/ribo-seq-snakemake/scripts'
 GENOME_BUILD = 'hg38'
 GENOME_FASTA = GENOMES_DIR + '/' + GENOME_BUILD + '/fasta/'+ GENOME_BUILD+ '.fa'
@@ -19,6 +19,7 @@ CDS_FASTA =  GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.pc_transl
 tRNA_FASTA = GENOMES_DIR + '/tRNA_eukaryotic/eukaryotic-tRNAs.fa'
 ncRNA_FASTA = GENOMES_DIR + '/' + GENOME_BUILD + '/cDNA/'+ 'gencode.v25.lncRNA_transcripts.fa'
 STAR_INDEX_DIR = GENOMES_DIR + '/' + GENOME_BUILD + '/star_index'
+RSEM_INDEX_PREFIX = GENOMES_DIR + '/' + GENOME_BUILD + '/rsem_index/hg38_rsem'
 
 RAWDATA_DIR_RIBO = '/staging/as/skchoudh/dna/Penalva_02222017/Penalva_L_01182017'
 RAWDATA_DIR_RNA = '/staging/as/skchoudh/dna/lai_data/Penalva_L_01182017'

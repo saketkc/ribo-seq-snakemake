@@ -20,12 +20,11 @@ print(RAWDATA_DIR_RNA)
 
 rule all:
     input:
-        CDS_RANGE_FILE,
-        STAR_INDEX_DIR+'/contaminant/fasta/contaminant.fa',
-        STAR_INDEX_DIR+'/contaminant/index',
-        STAR_INDEX_DIR + '/pcDNA/index',
-        expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
-        expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
+        RSEM_INDEX_PREFIX + '.transcripts.fa',
+        expand(RAWDATA_DIR_RNA+'/merged_fastq/{sample_name}_R1_001.fastq.gz', sample_name=SAMPLE_NAMES_RNA),
+        expand('mapped/{sample_name}/{sample_name}.gene.results', sample_name=SAMPLE_NAMES_RNA),
+        #expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
+        #expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
 
 
 rule prepare_reference:
@@ -33,22 +32,22 @@ rule prepare_reference:
     threads: 16
     shell:
         r'''
-        rsem-prepare-reference --gtf {GTF} --star -p {threads} {REFERENCE_FASTA} {RSEM_INDEX_PREFIX}
+        rsem-prepare-reference --gtf {GTF} --star -p {threads} {GENOME_FASTA} {RSEM_INDEX_PREFIX}
         '''
 
 rule merge_multi_lane_samples:
     ## Need to do this! :-/
     input:
         R1=expand('{raw_dir_rna}/{{sample_name}}_{lane}_R1_001.fastq.gz', raw_dir_rna=RAWDATA_DIR_RNA, lane=LANE_NAMES_RNA),
-        R2=expand('{raw_dir_rna}/{sample_name}_{lane}_R2_001.fastq.gz', raw_dir_rna=RAWDATA_DIR_RNA, lane=LANE_NAMES_RNA)
+        R2=expand('{raw_dir_rna}/{{sample_name}}_{lane}_R2_001.fastq.gz', raw_dir_rna=RAWDATA_DIR_RNA, lane=LANE_NAMES_RNA)
     output:
         R1=RAWDATA_DIR_RNA+'/merged_fastq/{sample_name}_R1_001.fastq.gz',
         R2=RAWDATA_DIR_RNA+'/merged_fastq/{sample_name}_R2_001.fastq.gz'
     run:
-        R1_files = ' '.join(input.R1)
-        R2_files = ' '.join(input.R2)
-        shell(r'''zcat {R1_FILES} > {output.R1}''')
-        shell(r'''zcat {R2_FILES} > {output.R2}''')
+        r1_files = ' '.join(input.R1)
+        r2_files = ' '.join(input.R2)
+        shell(r'''zcat {r1_files} > {output.R1}''')
+        shell(r'''zcat {r2_files} > {output.R2}''')
 
 rule perfom_trimming_rna:
     input:
@@ -71,7 +70,8 @@ rule quantify:
         R2=RAWDATA_DIR_RNA+'/merged_fastq/{sample_name}_R2_001.fastq.gz'
     threads: 16
     params:
-        prefix = 'mapped/{sample_name}/{sample_name}'
+        prefix = 'mapped/{sample_name}/{sample_name}',
+        tmpdir =  'mapped/tmp_dir/{sample_name}/'
     output: 'mapped/{sample_name}/{sample_name}.gene.results'
     shell:
-        r'''rsem-calculate-expresion --star --gzipped-read-file -p {threads} {input.R1} {input.R2} {RSEM_INDEX_PREFIX} {params.prefix}'''
+        r'''mkdir -p {OUT_DIR}/{params.tmpdir} && rsem-calculate-expression --paired-end --star --star-output-genome-bam --estimate-rspd -p {threads} {input.R1} {input.R2} {RSEM_INDEX_PREFIX} {params.prefix} --temporary-folder {OUT_DIR}/{params.tmpdir}'''
