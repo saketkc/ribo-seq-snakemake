@@ -1,5 +1,5 @@
 include:
-    'configs/config_hur_penalva_l_01182017.human.py'
+    'configs/config_HuR_Penalva_L_01182017.human.py'
 
 workdir: OUT_DIR
 
@@ -29,11 +29,17 @@ rule all:
         expand('preprocessed/{sample_name}/{sample_name}_{lane}_R1_001_trimmed.fq.gz', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
         expand('mapped/bams/{sample_name}/{sample_name}_{lane}.bam', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
         expand('mapped/merged_bams/{sample_name}.bam', sample_name=SAMPLE_NAMES),
-        expand('mapped/counts_strict/byExon/{sample}.exon.counts.tsv', sample=SAMPLE_NAMES),
-        expand('mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLE_NAMES),
-        'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.all.tsv',
-        'mapped/DE_analysis/featureCounts/'+GENOME_BUILD+'.featureCounts.DESeq2.sig.tsv',
-        'multiqc_report/multiqc_report.html',
+        expand('mapped/HTSeq/byExon/{sample}.exon.counts.tsv', sample=SAMPLE_NAMES),
+        expand('mapped/HTSeq/byUTR5/{sample}.utr5.counts.tsv', sample=SAMPLE_NAMES),
+        expand('mapped/HTSeq/byUTR3/{sample}.utr3.counts.tsv', sample=SAMPLE_NAMES),
+        expand('mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLE_NAMES),
+        expand('mapped/featureCounts/fcounts.utr3.tsv', sample=SAMPLE_NAMES),
+        expand('mapped/featureCounts/fcounts.utr5.tsv', sample=SAMPLE_NAMES),
+        expand('mapped/featureCounts/fcounts.cds.tsv', sample=SAMPLE_NAMES),
+        expand('mapped/featureCounts/fcounts.tsv', sample=SAMPLE_NAMES),
+        #'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.all.tsv',
+        #'mapped/DE_analysis/featureCounts/'+GENOME_BUILD+'.featureCounts.DESeq2.sig.tsv',
+        #'multiqc_report/multiqc_report.html',
 
 
 rule perform_qc:
@@ -100,31 +106,57 @@ rule sort_by_name:
             samtools sort -on {input} -T /tmp/ -o {output}
         '''
 
-rule count_exon:
+rule count_exon_HTSeq_utr5:
     input: 'mapped/merged_bams/{sample}.sortedByName.bam'
     params:
-        annotation=GTF,
+        annotation=GTF_UTR,
         phred_cutoff=5
-    output: 'mapped/counts_strict/byExon/{sample}.exon.counts.tsv'
+    output: 'mapped/HTSeq/byUTR5/{sample}.utr5.counts.tsv'
     shell:
         r'''
-        source activate clipseq2 && htseq-count --order=name --format=bam --mode={HTSEQ_MODE} --stranded={HTSEQ_STRANDED} --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}
+        htseq-count --order=name --format=bam --mode={HTSEQ_MODE} --stranded={HTSEQ_STRANDED} \
+        --minaqual={params.phred_cutoff} --type=five_prime_UTR --idattr=gene_id {input} {params.annotation} > {output}
         '''
 
-rule count_cds:
+rule count_exon_HTSeq_utr3:
+    input: 'mapped/merged_bams/{sample}.sortedByName.bam'
+    params:
+        annotation=GTF_UTR,
+        phred_cutoff=5
+    output: 'mapped/HTSeq/byUTR3/{sample}.utr3.counts.tsv'
+    shell:
+        r'''
+        htseq-count --order=name --format=bam --mode={HTSEQ_MODE} --stranded={HTSEQ_STRANDED} \
+        --minaqual={params.phred_cutoff} --type=three_prime_UTR --idattr=gene_id {input} {params.annotation} > {output}
+        '''
+
+rule count_exon_HTSeq:
     input: 'mapped/merged_bams/{sample}.sortedByName.bam'
     params:
         annotation=GTF,
         phred_cutoff=5
-    output: 'mapped/counts_strict/byCDS/{sample}.CDS.counts.tsv'
+    output: 'mapped/HTSeq/byExon/{sample}.exon.counts.tsv'
     shell:
         r'''
-        source activate clipseq2 && htseq-count --order=name --format=bam --mode={HTSEQ_MODE} --stranded={HTSEQ_STRANDED} --minaqual={params.phred_cutoff} --type=CDS --idattr=gene_id {input} {params.annotation} > {output}
+        htseq-count --order=name --format=bam --mode={HTSEQ_MODE} --stranded={HTSEQ_STRANDED} \
+        --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}
+        '''
+
+rule count_cds_HTSeq:
+    input: 'mapped/merged_bams/{sample}.sortedByName.bam'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
+    shell:
+        r'''
+        htseq-count --order=name --format=bam --mode={HTSEQ_MODE} --stranded={HTSEQ_STRANDED} \
+        --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}
         '''
 
 rule format_counts:
-    input: 'mapped/counts_strict/byExon/{sample}.exon.counts.tsv'
-    output: 'mapped/counts_strict/byExon/{sample}.counts.noversion.tsv'
+    input: 'mapped/HTSeq/byExon/{sample}.exon.counts.tsv'
+    output: 'mapped/HTSeq/byExon/{sample}.counts.noversion.tsv'
     shell:
         r'''
         cat {input} | sed -E 's/\.[0-9]+//' > {output}
@@ -139,6 +171,29 @@ rule featurecounts:
     threads: 16
     shell:
         r'''featureCounts {FEATURECOUNTS_S} -a {params.annotation} -o {output} -t exon -g gene_id -Q 4 -T {threads} {input}'''
+
+rule featurecounts_cds:
+    input: expand('mapped/merged_bams/{sample}.sortedByName.bam', sample=set(SAMPLE_NAMES_U))
+    params:
+        annotation=GTF_UTR
+    output: 'mapped/featureCounts/fcounts.cds.tsv'
+    threads: 16
+    shell:
+        r'''featureCounts {FEATURECOUNTS_S} -a {params.annotation} -o {output} -t CDS -g gene_id -Q 4 -T {threads} {input}'''
+
+rule featurecounts_utr5:
+    input: expand('mapped/merged_bams/{sample}.sortedByName.bam', sample=set(SAMPLE_NAMES_U))
+    output: 'mapped/featureCounts/fcounts.utr5.tsv'
+    threads: 16
+    shell:
+        r'''featureCounts -s 1 -a {GTF_UTR} -o {output} -t five_prime_UTR -g gene_id -Q 4 -T {threads} {input}'''
+
+rule featurecounts_utr3:
+    input: expand('mapped/merged_bams/{sample}.sortedByName.bam', sample=set(SAMPLE_NAMES_U))
+    output: 'mapped/featureCounts/fcounts.utr3.tsv'
+    threads: 16
+    shell:
+        r'''featureCounts -s 1 -a {GTF_UTR} -o {output} -t three_prime_UTR -g gene_id -Q 4 -T {threads} {input}'''
 
 rule format_fcounts:
     input: 'mapped/featureCounts/fcounts.tsv'
@@ -160,13 +215,13 @@ rule run_picardmetrics:
         '''
 
 rule run_deseq:
-    input: expand('mapped/counts_strict/byExon/{sample}.counts.noversion.tsv', sample=SAMPLE_NAMES_U)
+    input: expand('mapped/HTSeq/byExon/{sample}.counts.noversion.tsv', sample=SAMPLE_NAMES_U)
     output:
         'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.all.tsv',
         'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq.DESeq2.sig.tsv'
 
     params:
-        basedir = 'mapped/counts_strict/byExon',
+        basedir = 'mapped/HTSeq/byExon',
         inprefix = 'counts.noversion',
         gene_annotations  = GENE_NAMES,
         outprefix = 'mapped/DE_analysis/HTSeq/'+GENOME_BUILD+'.HTSeq'
@@ -208,7 +263,7 @@ rule create_insertsize_tsv:
         '''
 rule counts_to_tpm:
     input:
-        count = expand('mapped/counts_strict/byExon/{sample}.counts.noversion.tsv', sample=SAMPLE_NAMES),
+        count = expand('mapped/HTSeq/byExon/{sample}.counts.noversion.tsv', sample=SAMPLE_NAMES),
         insert_size = expand('mapped/bam_metrics/{sample}.insertsizes.tsv', sample=SAMPLE_NAMES),
     output: 
         'mapped/tpm/masterTPM.tsv'

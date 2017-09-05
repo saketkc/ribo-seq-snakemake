@@ -23,6 +23,7 @@ rule all:
         RSEM_INDEX_PREFIX + '.transcripts.fa',
         expand(RAWDATA_DIR_RNA+'/merged_fastq/{sample_name}_R1_001.fastq.gz', sample_name=SAMPLE_NAMES_RNA),
         expand('mapped/{sample_name}/{sample_name}.genes.results', sample_name=SAMPLE_NAMES_RNA),
+        expand('mapped/ribo/{sample_name}.genes.results', sample_name=SAMPLE_NAMES_RIBO),
         #expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R1_001_val_1.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
         #expand('preprocessed/rna/{sample_name}/{sample_name}_{lane}_R2_001_val_2.fq.gz', zip, sample_name=SAMPLE_NAMES_RNA, lane=LANE_NAMES_RNA),
 
@@ -64,7 +65,31 @@ rule perfom_trimming_rna:
             trim_galore --paired -o {params.out_dir} -q {params.phred_cutoff} {input.R1} {input.R2}
         '''
 
-rule quantify:
+rule perfom_trimming_ribo:
+    input:
+        R1=RAWDATA_DIR_RIBO+'/{sample_name}_L004_R1_001.fastq.gz',
+    params:
+        out_dir='preprocessed/ribo/',
+        phred_cutoff=5
+    output:
+        'preprocessed/ribo/{sample_name}_L004_R1_001_trimmed.fq.gz',
+    shell:
+        r'''
+            trim_galore -o {params.out_dir} -q {params.phred_cutoff} {input.R1}
+        '''
+
+rule quantify_ribo:
+    input: 'preprocessed/ribo/{sample_name}_L004_R1_001_trimmed.fq.gz',
+    threads: 16
+    params:
+        prefix = 'mapped/ribo/{sample_name}',
+        tmpdir =  'mapped/tmp_dir/{sample_name}/'
+    output: 'mapped/ribo/{sample_name}.genes.results'
+    shell:
+        r'''mkdir -p {OUT_DIR}/{params.tmpdir} && rsem-calculate-expression --star --star-gzipped-read-file --star-output-genome-bam --estimate-rspd -p {threads} {input} {RSEM_INDEX_PREFIX} {params.prefix} --temporary-folder {OUT_DIR}/{params.tmpdir}'''
+
+
+rule quantify_rna:
     input:
         R1=RAWDATA_DIR_RNA+'/merged_fastq/{sample_name}_R1_001.fastq.gz',
         R2=RAWDATA_DIR_RNA+'/merged_fastq/{sample_name}_R2_001.fastq.gz'
