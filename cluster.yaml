@@ -1,7 +1,7 @@
 __default__:
     q: 'cmb'
     time: '7:00:00'
-    mem: '60000MB'
+    mem: '100000MB'
     cores: 16
     logdir: '/home/cmb-06/as/skchoudh/logs/'
 

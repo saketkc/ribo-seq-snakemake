@@ -9,8 +9,12 @@ import glob
 import re
 
 SAMPLES = glob.glob('{}/*.fastq.gz'.format(RAWDATA_DIR), recursive=False)
-print(SAMPLES)
 SAMPLES = sorted([sample.replace('{}'.format(RAWDATA_DIR),'').replace('.fastq.gz','') for sample in SAMPLES])
+#STRANDS = ['pos', 'neg', 'both']
+STRANDS = ['both']
+#ENDTYPE = ['5prime', '3prime', 'either']
+ENDTYPE = ['5prime']
+print(SAMPLES)
 
 rule all:
     input:
@@ -23,6 +27,21 @@ rule all:
         expand('mapped/HTSeq/byExon/{sample}.exon.counts.tsv', sample=SAMPLES),
         expand('mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLES),
         'multiqc_report/multiqc_report.html',
+        expand('pickled_data/{sample}.coverage_start_codons.pickle', sample=SAMPLES),
+        expand('pickled_data/{sample}.coverage.pickle', sample=SAMPLES),
+        expand('pickled_data/{sample}.fragment_lengths.pickle', sample=SAMPLES),
+        expand('pickled_data/{sample}.coverage_gene.pickle', sample=SAMPLES),
+        expand('mapped/bedGraphs/{sample}.{endtype}.{strand}.bedGraph', sample=SAMPLES,
+                                                                             endtype=ENDTYPE,
+                                                                             strand=STRANDS),
+
+        expand('mapped/bigWigs/{sample}.{endtype}.{strand}.bw', sample=SAMPLES,
+                                                                     endtype=ENDTYPE,
+                                                                     strand=STRANDS),
+        expand('mapped/metagene_pickled_data/{sample}.{endtype}.{strand}_metagene.pickle', sample=SAMPLES,
+                                                                     endtype=ENDTYPE,
+                                                                     strand=STRANDS),
+
 
 rule create_index:
     input:
@@ -67,7 +86,7 @@ rule map_star:
     input:
         R1='preprocessed/{sample_name}_trimmed.fq.gz',
         index=STAR_INDEX
-    output: 
+    output:
         bam='mapped/bams/{sample_name}.bam',
         counts='mapped/STARcounts/{sample_name}.counts'
     params:
@@ -105,7 +124,7 @@ rule count_exon_rna:
         phred_cutoff=5
     output: 'mapped/HTSeq/byExon/{sample}.exon.counts.tsv'
     run:
-        shell(r'''source activate python2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded=yes --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}''')
+        shell(r'''source activate {PYTHON2ENV} && htseq-count --order=name --format=bam --mode=intersection-strict --stranded=yes --minaqual={params.phred_cutoff} --type=exon --idattr=gene_id {input} {params.annotation} > {output}''')
 
 rule count_cds:
     input: 'mapped/bams/{sample}.sortedByName.bam'
@@ -114,7 +133,7 @@ rule count_cds:
         phred_cutoff=5
     output: 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
     run:
-        shell(r'''source activate python2 && htseq-count --order=name --format=bam --mode=intersection-strict --stranded=yes --minaqual={params.phred_cutoff} --type=CDS --idattr=gene_id {input} {params.annotation} > {output}''')
+        shell(r'''source activate {PYTHON2ENV} && htseq-count --order=name --format=bam --mode=intersection-strict --stranded=yes --minaqual={params.phred_cutoff} --type=CDS --idattr=gene_id {input} {params.annotation} > {output}''')
 
 
 rule format_counts:
@@ -268,7 +287,7 @@ rule get_duplication_estimate:
         outprefix='mapped/post_mapping_deduplication/{sample}/output'
     shell:
         r'''
-        source activate python2 && read_duplication.py -i {input} -o {params.outprefix}
+        source activate {PYTHON2ENV} && read_duplication.py -i {input} -o {params.outprefix}
         '''
 
 rule bam_to_sam:
@@ -285,7 +304,7 @@ rule infer_experiment:
     output: 'inferred_experiment/{sample}.txt'
     shell:
         r'''
-        source activate python2 && infer_experiment.py -r {GENE_BED} -i {input} 2>&1 > {output} 
+        source activate {PYTHON2ENV} && infer_experiment.py -r {GENE_BED} -i {input} 2>&1 > {output} 
         '''
 
 rule run_multiqc:
@@ -301,4 +320,96 @@ rule run_multiqc:
     shell:
         'export LC_ALL=en_US.UTF-8 && multiqc -f --outdir multiqc_report .'
 
+
+rule count_coverage:
+    input: 'mapped/bams/{sample}.bam'
+    output: 'pickled_data/{sample}.coverage.pickle'
+    shell:
+        r'''source activate {PYTHON2ENV} && python {SRC_DIR}/coverage.py {input} {output}'''
+
+rule count_fragment_lengths:
+    input: 'mapped/bams/{sample}.bam'
+    output: 'pickled_data/{sample}.fragment_lengths.pickle'
+    shell:
+        r'''source activate {PYTHON2ENV} && python {SRC_DIR}/query_lengths.py {input} {output}'''
+
+rule count_coverage_start_codons:
+    input: 'mapped/bams/{sample}.bam'
+    output: 'pickled_data/{sample}.coverage_start_codons.pickle'
+    shell:
+        r'''source activate {PYTHON2ENV} && python {SRC_DIR}/coverage_startcodons.py {input} {output} {START_CODON_BED} {STOP_CODON_BED}'''
+
+rule count_coverage_gene:
+    input: 'mapped/bams/{sample}.bam'
+    output: 'pickled_data/{sample}.coverage_gene.pickle'
+    shell:
+        r'''source activate {PYTHON2ENV} \
+        && python {SRC_DIR}/coverage_gene.py {input} {output} {CDS_BED}'''
+
+rule count_coverage_all:
+    input: 'mapped/bams/{sample}.bam'
+    params:
+        strand = '{strand}',
+        endtype = '{endtype}'
+    output:
+        bg = 'mapped/bedGraphs/{sample}.{endtype}.{strand}.bedGraph',
+        bw = 'mapped/bigWigs/{sample}.{endtype}.{strand}.bw',
+    run:
+        if params.endtype == '5prime':
+            extra_args = '-5'
+        elif params.endtype == '3prime':
+            extra_args = '-3'
+        elif params.endtype == 'either':
+            extra_args = ''
+        if params.strand == 'both':
+            shell(r''' bedtools genomecov -ibam {input} -bg {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+        elif params.strand == 'pos':
+            shell(r''' bedtools genomecov -ibam {input} -bg -strand + {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+        elif params.strand == 'neg':
+            shell(r''' bedtools genomecov -ibam {input} -bg -strand - {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+
+
+rule count_coverage_lengthfiltered:
+    input: 'length_filtered_bam/{length_range}/{sample}.{length_range}.bam'
+    params:
+        strand = '{strand}',
+        endtype = '{endtype}'
+    output:
+        bg = 'mapped/bedGraphs_length_filtered/{length_range}/{sample}.{endtype}.{strand}.bedGraph',
+        bw = 'mapped/bigWigs_length_filtered/{length_range}/{sample}.{endtype}.{strand}.bw'
+    run:
+        if params.endtype == '5prime':
+            extra_args = '-5'
+        elif params.endtype == '3prime':
+            extra_args = '-3'
+        elif params.endtype == 'either':
+            extra_args = ''
+        if params.strand == 'both':
+            shell(r''' bedtools genomecov -ibam {input} -bg {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+        elif params.strand == 'pos':
+            shell(r''' bedtools genomecov -ibam {input} -bg -strand + {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+        elif params.strand == 'neg':
+            shell(r''' bedtools genomecov -ibam {input} -bg -strand - {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+
+rule genelevel_normalized_counts:
+    input: 'mapped/bigWigs/{sample}.{endtype}.{strand}.bw'
+    output: 
+        metagene = 'mapped/metagene_pickled_data/{sample}.{endtype}.{strand}_metagene.pickle',
+        genewise = 'mapped/metagene_pickled_data/{sample}.{endtype}.{strand}_genewise.pickle',
+    params:
+        prefix = 'mapped/metagene_pickled_data/{sample}.{endtype}.{strand}'
+    shell:
+        r'''source activate {PYTHON2ENV} && python {SRC_DIR}/coverage_bigwig_cds.py {input} {CDS_BED} {params.prefix}'''
 
