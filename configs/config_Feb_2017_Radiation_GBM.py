@@ -15,6 +15,12 @@ FEATURECOUNTS_S = '-s 1'
 GENE_BED = GENOMES_DIR + '/' + GENOME_BUILD + '/annotation/' + 'gencode.24.genes.bed'  #+ GENOME_BUILD+'_gene_lengths.tsv'
 FEATURECOUNTS_T = 'CDS'
 HTSEQ_MODE = 'intersection-strict'
+
+
+
+UTR5_BED = GENOMES_DIR + '/' + GENOME_BUILD + '/annotation/' + 'gencode.v25.gffutils.UTR5.bed'
+UTR3_BED = GENOMES_DIR + '/' + GENOME_BUILD + '/annotation/' + 'gencode.v25.gffutils.UTR3.bed'
+
 START_CODON_BED = GENOMES_DIR + '/' + GENOME_BUILD + '/annotation/' + 'gencode.v25.gffutils.start_codon.bed'  #+ GENOME_BUILD+'_gene_lengths.tsv'
 STOP_CODON_BED = GENOMES_DIR + '/' + GENOME_BUILD + '/annotation/' + 'gencode.v25.gffutils.stop_codon.bed'  #+ GENOME_BUILD+'_gene_lengths.tsv'
 PYTHON2ENV = 'python2'

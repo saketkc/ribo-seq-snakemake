@@ -1,0 +1,633 @@
+shell.executable("/bin/bash")
+shell.prefix("source ~/.bashrc; ")
+
+import os
+import sys
+from itertools import chain
+from os.path import join
+import glob
+import re
+import pandas as pd
+import numpy as np
+
+RSEM_INDEX_PREFIX = None
+INTRON_BED = None
+include:
+    'configs/Nov_11_2017_Penalva_U343_MSI1_RPS5.py'
+
+workdir: OUT_DIR
+
+if not RSEM_INDEX_PREFIX:
+    RSEM_INDEX_PREFIX = STAR_INDEX.replace('star_annotated', 'rsem_index').replace('star_index', 'rsem_index')
+
+if not INTRON_BED:
+    INTRON_BED = CDS_BED.replace('cds', 'intron')
+
+def get_strandedness(filepath):
+    with open(filepath) as f:
+        data = f.read()
+    splitted = [x.strip() for x in data.split('\n') if len(x.strip())>=1]
+    strandedness = None
+    assert splitted[0] == 'This is SingleEnd Data'
+    few_percentage = None
+    rev_percentage = None
+    for line in splitted[1:]:
+        if 'Fraction of reads failed to determine:' in line:
+            continue
+        elif 'Fraction of reads explained by "++,--":' in line:
+            fwd_percentage = float(line.split(':')[1])
+        elif 'Fraction of reads explained by "+-,-+":' in line:
+            rev_percentage = float(line.split(':')[1])
+
+    assert rev_percentage is not None
+    assert fwd_percentage is not None
+
+    ratio = fwd_percentage/rev_percentage
+
+    if np.isclose([ratio], [1]):
+        return 'none'
+    elif ratio>=0.5:
+            return 'forward'
+    else:
+        return 'reverse'
+
+
+def total_genome_size():
+    df = pd.read_table(CHROM_SIZES, names=['chrom', 'sizes'])
+    total = df['sizes'].sum()
+    return total
+
+def get_align_intro_params():
+    df = pd.read_table(INTRON_BED, names=['chrom', 'start', 'end', 'name', 'score', 'strand'])
+    lengths = df['end'] - df['start']
+
+    ## Based on small genomes. See https://groups.google.com/forum/#!topic/rna-star/hQeHTBbkc0c
+    alignintronNmin = max(4, lengths.min())
+    alignintronNmax = lengths.max()
+    return alignintronNmin, alignintronNmax
+
+ALIGN_INTRON_Nmin, ALIGN_INTRON_Nmax = get_align_intro_params()
+TOTAL_GENOME_SIZE = total_genome_size()
+## Small genome optimization
+## See STAR manual 2.2.5
+SA_INDEX_Nbases = int(np.floor(min(14, np.log2(TOTAL_GENOME_SIZE)/2.0-1)))
+
+#STRANDS = ['pos', 'neg', 'both']
+STRANDS = ['both']
+ENDTYPE = ['5prime', '3prime', 'either']
+#ENDTYPE = ['5prime']
+LENGTH_RANGES = ['{}-{}'.format(l, l) for l in range(21, 37)]
+
+SAMPLES = glob.glob('{}**/*.fastq.gz'.format(RAWDATA_DIR), recursive=False)
+SAMPLE_LANE = []
+for sample in SAMPLES:
+    sample = sample.replace('{}/'.format(RAWDATA_DIR),'')
+    sample_name = re.split(r'_L\d\d\d_', sample)[0]
+    lane_name = re.search(r'L\d\d\d', sample).group()
+    SAMPLE_LANE.append((sample_name, lane_name))
+
+SAMPLE_LANE = set(SAMPLE_LANE)
+SAMPLE_LANE = sorted(SAMPLE_LANE, key=lambda tup: tup[0])
+SAMPLE_NAMES, LANE_NAMES = zip(*SAMPLE_LANE)
+SAMPLE_NAMES_U = sorted(set(SAMPLE_NAMES))
+
+rule all:
+    input:
+        STAR_INDEX,
+        expand('qc/{sample_name}_{lane}_R1_001_fastqc.html', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
+        expand('inferred_experiment/{sample_name}.txt', sample_name=SAMPLE_NAMES),
+        expand('preprocessed/{sample_name}_{lane}_R1_001_trimmed.fq.gz', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
+        expand('mapped/lanewise_bams/{sample_name}_{lane}.bam', zip, sample_name=SAMPLE_NAMES, lane=LANE_NAMES),
+        expand('mapped/bams/{sample_name}.bam', sample_name=SAMPLE_NAMES),
+        expand('mapped/bedGraphs/{sample_name}.{endtype}.{strand}.bedGraph', sample_name=SAMPLE_NAMES,
+                                                                             endtype=ENDTYPE,
+                                                                             strand=STRANDS),
+
+        expand('mapped/bigWigs/{sample_name}.{endtype}.{strand}.bw', sample_name=SAMPLE_NAMES,
+                                                                     endtype=ENDTYPE,
+                                                                     strand=STRANDS),
+
+        expand('mapped/HTSeq/byExon/{sample_name}.exon.counts.tsv', sample_name=SAMPLE_NAMES),
+        expand('mapped/HTSeq/byCDS/{sample_name}.CDS.counts.tsv', sample_name=SAMPLE_NAMES),
+        expand('mapped/HTSeq/byCDS/{sample_name}.CDS.tpm.tsv', sample_name=SAMPLE_NAMES),
+        expand('pickled_data/{sample_name}.fragment_lengths.pickle', sample_name=SAMPLE_NAMES),
+        'mapped/featureCounts/byCDS/fcounts.CDS.tsv',
+        'mapped/featureCounts/byExon/fcounts.exon.tsv',
+        expand('metagene_pickled_data_UTR5/{sample_name}.{endtype}.{strand}_metagene_normalized.pickle', sample_name=SAMPLE_NAMES,
+                                                                     endtype=ENDTYPE,
+                                                                     strand=STRANDS),
+        expand('metagene_pickled_data_CDS_offset60/{sample_name}.{endtype}.{strand}_topgene_normalized.pickle', sample_name=SAMPLE_NAMES,
+                                                                     endtype=ENDTYPE,
+                                                                     strand=STRANDS),
+        expand('metagene_pickled_data_UTR3/{sample_name}.{endtype}.{strand}_metagene_normalized.pickle', sample_name=SAMPLE_NAMES,
+                                                                     endtype=ENDTYPE,
+                                                                     strand=STRANDS),
+        expand('start_codon_summaries/{sample_name}.{endtype}.{strand}.good.tsv',sample_name=SAMPLE_NAMES,
+                                                                     endtype=ENDTYPE,
+                                                                     strand=STRANDS),
+        expand('tracks/{sample_name}.bw', sample_name=SAMPLE_NAMES),
+        expand('tracks/{sample_name}.bedGraph', sample_name=SAMPLE_NAMES),
+
+rule create_rsem_index:
+    input:
+        GENOME_FASTA,
+        GTF
+    output: RSEM_INDEX_PREFIX + '.chrlist'
+    params:
+        prefix = RSEM_INDEX_PREFIX
+    resources:
+        mem_mb=61000
+    threads: 16
+    shell:
+        r'''rsem-prepare-reference --gtf {GTF} \
+            --star \
+            --num-threads {threads} \
+            {GENOME_FASTA} \
+            {params.prefix}
+        '''
+
+rule create_index:
+    input:
+        fasta=GENOME_FASTA,
+        gtf=GTF
+    output: STAR_INDEX
+    resources:
+        mem_mb=61000
+    threads: 16
+    shell:
+        r'''mkdir -p {output} && STAR --runThreadN {threads}\
+        --runMode genomeGenerate \
+        --genomeDir {output} \
+        --genomeSAindexNbases {SA_INDEX_Nbases} \
+        --genomeFastaFiles {input.fasta}\
+        --sjdbGTFfile {input.gtf}'''
+
+
+rule perform_qc:
+    input:
+        R1=RAWDATA_DIR+'/{sample_name}_{lane}_R1_001.fastq.gz',
+    params:
+        out_dir = 'qc'
+    output:
+       'qc/{sample_name}_{lane}_R1_001_fastqc.html',
+       'qc/{sample_name}_{lane}_R1_001_fastqc.zip',
+    shell:
+        r'''
+            fastqc -o {params.out_dir} -f fastq {input.R1}
+        '''
+
+rule perfom_trimming:
+    input:
+        R1=RAWDATA_DIR+'/{sample_name}_{lane}_R1_001.fastq.gz',
+    params:
+        out_dir='preprocessed',
+        phred_cutoff=5
+    output:
+        'preprocessed/{sample_name}_{lane}_R1_001_trimmed.fq.gz',
+    shell:
+        r'''
+            trim_galore -o {params.out_dir} -q {params.phred_cutoff} {input.R1}
+        '''
+
+rule map_star:
+    input:
+        R1='preprocessed/{sample_name}_{lane}_R1_001_trimmed.fq.gz',
+        index=STAR_INDEX
+    version: "1.0.txSAM"
+    output:
+        bam='mapped/lanewise_bams/{sample_name}_{lane}.bam',
+        txbam='mapped/lanewise_tx_bams/{sample_name}_{lane}.bam',
+        counts='mapped/lanewise_STARcounts/{sample_name}_{lane}.counts'
+    params:
+        prefix = 'mapped/lanewise_bams/{sample_name}_{lane}',
+        unmapped = 'unmapped/lanewise_fastq/{sample_name}_{lane}',
+        starlogs = 'mapped/starlogs',
+    resources:
+        mem_mb=61000
+    threads: 16
+    shell:
+        r'''
+        STAR --runThreadN {threads}\
+             --genomeDir {input.index}\
+             --outFilterMismatchNmax 2\
+             --alignIntronMin {ALIGN_INTRON_Nmin}\
+             --alignIntronMax {ALIGN_INTRON_Nmax}\
+             --outFileNamePrefix {params.prefix} --readFilesIn {input.R1}\
+             --outSAMtype BAM SortedByCoordinate\
+             --readFilesCommand zcat\
+             --quantMode TranscriptomeSAM GeneCounts\
+             --outReadsUnmapped {params.unmapped}\
+             --limitBAMsortRAM 5627085936\
+             && mv {params.prefix}Aligned.sortedByCoord.out.bam {output.bam}\
+             && mv {params.prefix}Aligned.toTranscriptome.out.bam {output.txbam}\
+             && samtools index {output.bam}\
+             && mv {params.prefix}ReadsPerGene.out.tab {output.counts}\
+             && mkdir -p {params.starlogs}\
+             && mv {params.prefix}Log.final.out {params.prefix}Log.out \
+             {params.prefix}Log.progress.out {params.starlogs}
+        '''
+
+## See: https://software.broadinstitute.org/gatk/guide/article?id=3060
+## Merging should happen post alignment
+rule merge_bams:
+    input: expand('mapped/lanewise_bams/{{sample_name}}_{lane}.bam', lane=set(LANE_NAMES))
+    output: 'mapped/bams/{sample_name}.bam'
+    run:
+        cmd = ' -in '.join(input)
+        shell(r'''bamtools merge -in {cmd} -out {output}''')
+
+rule merge_tx_bams:
+    input: expand('mapped/lanewise_tx_bams/{{sample_name}}/{{sample_name}}_{lane}.bam', lane=set(LANE_NAMES))
+    output: 'mapped/tx_bams/{sample_name}.bam'
+    run:
+        cmd = ' -in '.join(input)
+        shell(r'''bamtools merge -in {cmd} -out {output}''')
+
+rule rsem_tx_level_counts:
+    input:
+        tx_bam = 'mapped/tx_bams/{sample_name}.bam',
+        inferred_exp = 'inferred_experiment/{sample_name}.txt',
+        index = RSEM_INDEX_PREFIX + '.chrlist'
+    params:
+        prefix = 'mapped/tx_counts/{sample_name}',
+        index = RSEM_INDEX_PREFIX
+    output: 'mapped/tx_counts/{sample_name}.genes.results'
+    threads: 16
+    run:
+        strandedness = get_strandedness(str(input.inferred_exp))
+        shell(r'''rsem-calculate-expression --alignments {input.tx_bam} \
+        --num-threads {threads} \
+        --calc-pme \
+        --calc-ci \
+        --strandedness {strandedness} \
+        {params.index} {params.prefix}''')
+
+
+rule bamtools_filter:
+    input: 'mapped/bams/{sample_name}.bam'
+    output: 'length_filtered_bam/{length_range}/{sample_name}.{length_range}.bam'
+    resources:
+        mem_mb=10000
+    run:
+        start, end = wildcards.length_range.split('-')
+        start = int(start) - 1
+        end = int(end) + 1
+        shell(r'''bamtools filter -length "<{end}" -in {input} | bamtools filter -length ">{start}" -out {output}''')
+
+
+rule count_coverage_all:
+    input: 'mapped/bams/{sample_name}.bam'
+    params:
+        strand = '{strand}',
+        endtype = '{endtype}'
+    output:
+        bg = 'mapped/bedGraphs/{sample_name}.{endtype}.{strand}.bedGraph',
+        bw = 'mapped/bigWigs/{sample_name}.{endtype}.{strand}.bw',
+    resources:
+        mem_mb=30000
+    run:
+        if params.endtype == '5prime':
+            extra_args = '-5'
+        elif params.endtype == '3prime':
+            extra_args = '-3'
+        elif params.endtype == 'either':
+            extra_args = ''
+        if params.strand == 'both':
+            shell(r''' bedtools genomecov -ibam {input} -bg {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+        elif params.strand == 'pos':
+            shell(r''' bedtools genomecov -ibam {input} -bg -strand + {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+        elif params.strand == 'neg':
+            shell(r''' bedtools genomecov -ibam {input} -bg -strand - {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+
+
+rule count_coverage_lengthfiltered:
+    input: 'length_filtered_bam/{length_range}/{sample_name}.{length_range}.bam'
+    params:
+        strand = '{strand}',
+        endtype = '{endtype}'
+    output:
+        bg = 'mapped/bedGraphs_length_filtered/{length_range}/{sample_name}.{endtype}.{strand}.bedGraph',
+        bw = 'mapped/bigWigs_length_filtered/{length_range}/{sample_name}.{endtype}.{strand}.bw'
+    resources:
+        mem_mb=30000
+    run:
+        if params.endtype == '5prime':
+            extra_args = '-5'
+        elif params.endtype == '3prime':
+            extra_args = '-3'
+        elif params.endtype == 'either':
+            extra_args = ''
+        if params.strand == 'both':
+            shell(r''' bedtools genomecov -ibam {input} -bg {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+        elif params.strand == 'pos':
+            shell(r''' bedtools genomecov -ibam {input} -bg -strand + {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+        elif params.strand == 'neg':
+            shell(r''' bedtools genomecov -ibam {input} -bg -strand - {extra_args} > {output.bg}\
+            && bedSort {output.bg} {output.bg} \
+            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+
+
+rule genelevel_normalized_counts:
+    input: 'mapped/bigWigs/{sample_name}.{endtype}.{strand}.bw'
+    output:
+        metagene = 'mapped/metagene_pickled_data/{sample_name}.{endtype}.{strand}_metagene.pickle',
+    params:
+        prefix = 'mapped/metagene_pickled_data/{sample_name}.{endtype}.{strand}'
+    resources:
+        mem_mb=100000
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && python {SRC_DIR}/coverage_bigwig_cds.py {input} {CDS_BED} {params.prefix}
+        '''
+
+
+rule genelevel_normalized_counts_utr5:
+    input:
+        bw = 'mapped/bigWigs/{sample_name}.{endtype}.{strand}.bw',
+        htseq = 'mapped/HTSeq/byCDS/{sample_name}.CDS.counts.tsv'
+    version: '0.2.2'
+    output:
+        metagene = 'metagene_pickled_data_UTR5/{sample_name}.{endtype}.{strand}_metagene_normalized.pickle',
+        topgene = 'metagene_pickled_data_UTR5/{sample_name}.{endtype}.{strand}_topgene_normalized.pickle',
+    resources:
+        mem_mb=60000
+    params:
+        prefix = 'metagene_pickled_data_UTR5/{sample_name}.{endtype}.{strand}',
+        offset = 0,
+        top_n_meta = 1000,
+        top_n_gene = 10,
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && \
+        python {SRC_DIR}/metagene_counter.py --bigwig {input.bw} \
+        --htseq_f {input.htseq} \
+        --region_bed_f {UTR5_BED} \
+        --master_offset {params.offset} \
+        --top_n_meta {params.top_n_meta} \
+        --top_n_gene {params.top_n_gene} \
+        --prefix {params.prefix}
+        '''
+
+
+
+rule genelevel_normalized_counts_utr3:
+    input:
+        bw = 'mapped/bigWigs/{sample_name}.{endtype}.{strand}.bw',
+        htseq = 'mapped/HTSeq/byCDS/{sample_name}.CDS.counts.tsv'
+    version: '0.2.2'
+    output:
+        metagene = 'metagene_pickled_data_UTR3/{sample_name}.{endtype}.{strand}_metagene_normalized.pickle',
+        topgene = 'metagene_pickled_data_UTR3/{sample_name}.{endtype}.{strand}_topgene_normalized.pickle',
+    resources:
+        mem_mb=60000
+    params:
+        prefix = 'metagene_pickled_data_UTR3/{sample_name}.{endtype}.{strand}',
+        offset = 0,
+        top_n_meta = 1000,
+        top_n_gene = 10,
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && \
+        python {SRC_DIR}/metagene_counter.py --bigwig {input.bw} \
+        --htseq_f {input.htseq} \
+        --region_bed_f {UTR3_BED} \
+        --master_offset {params.offset} \
+        --top_n_meta {params.top_n_meta} \
+        --top_n_gene {params.top_n_gene} \
+        --prefix {params.prefix}
+        '''
+
+
+rule genelevel_normalized_counts_cds_offset60:
+    input:
+        bw = 'mapped/bigWigs/{sample_name}.{endtype}.{strand}.bw',
+        htseq = 'mapped/HTSeq/byCDS/{sample_name}.CDS.counts.tsv'
+    version: '0.2.2'
+    output:
+        metagene = 'metagene_pickled_data_CDS_offset60/{sample_name}.{endtype}.{strand}_metagene_normalized.pickle',
+        topgene = 'metagene_pickled_data_CDS_offset60/{sample_name}.{endtype}.{strand}_topgene_normalized.pickle',
+    resources:
+        mem_mb=60000
+    params:
+        prefix = 'metagene_pickled_data_CDS_offset60/{sample_name}.{endtype}.{strand}',
+        offset = 60,
+        top_n_meta = 1000,
+        top_n_gene = 10,
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && \
+        python {SRC_DIR}/metagene_counter.py --bigwig {input.bw} \
+        --htseq_f {input.htseq} \
+        --region_bed_f {CDS_BED} \
+        --master_offset {params.offset} \
+        --top_n_meta {params.top_n_meta} \
+        --top_n_gene {params.top_n_gene} \
+        --prefix {params.prefix}
+        '''
+
+
+rule sort_by_name:
+    input: 'mapped/bams/{sample_name}.bam'
+    output: 'mapped/bams/{sample_name}.sortedByName.bam'
+    resources:
+        mem_mb=20000
+    shell:
+        r'''
+        samtools sort -on {input} -T /tmp/ -o {output} && samtools index {output}
+        '''
+
+
+rule count_exon:
+    input: 'mapped/bams/{sample_name}.sortedByName.bam'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq/byExon/{sample_name}.exon.counts.tsv'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''source activate {PYTHON2ENV} && \
+        htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=yes --minaqual={params.phred_cutoff} --type=exon \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
+
+
+rule count_cds:
+    input: 'mapped/bams/{sample_name}.sortedByName.bam'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq/byCDS/{sample_name}.CDS.counts.tsv'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''source activate {PYTHON2ENV} \
+        && htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=yes --minaqual={params.phred_cutoff} --type=CDS \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
+
+
+rule featurecounts_exon:
+    input: expand('mapped/bams/{sample_name}.sortedByName.bam', sample_name=set(SAMPLE_NAMES))
+    params:
+        annotation=GTF
+    output: 'mapped/featureCounts/byExon/fcounts.exon.tsv'
+    resources:
+        mem_mb=20000
+    threads: 16
+    shell:
+        r'''featureCounts -s 1 -a {params.annotation} -o {output} \
+        -t exon -g gene_id -Q 4 -T {threads} {input}
+        '''
+
+
+rule featurecounts_cds:
+    input: expand('mapped/bams/{sample_name}.sortedByName.bam', sample_name=set(SAMPLE_NAMES))
+    params:
+        annotation=GTF
+    output: 'mapped/featureCounts/byCDS/fcounts.CDS.tsv'
+    resources:
+        mem_mb=20000
+    threads: 16
+    shell:
+        r'''featureCounts -s 1 -a {params.annotation} -o {output} \
+        -t CDS -g gene_id -Q 4 -T {threads} {input}
+        '''
+
+
+rule perform_qualimap_qc:
+    input:  'mapped/bams/{sample_name}.bam',
+    output: 'mapped/post_mapping_qualimap/{sample_name}/qualimapReport.html',
+    resources:
+        mem_mb=10000
+    params:
+        outdir='mapped/post_mapping_qualimap/{sample_name}',
+        gtf=GTF
+    shell:
+        r'''
+        qualimap rnaseq -bam {input} -gtf {params.gtf} --outdir {params.outdir} --java-mem-size=16G
+        '''
+
+
+rule get_duplication_estimate:
+    input:  'mapped/bams/{sample_name}.bam'
+    output: 'mapped/post_mapping_deduplication/{sample_name}/output.DupRate_plot.r'
+    resources:
+        mem_mb=10000
+    params:
+        outprefix='mapped/post_mapping_deduplication/{sample_name}/output'
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && \
+        read_duplication.py -i {input} -o {params.outprefix}
+        '''
+
+
+rule infer_experiment:
+    input:  'mapped/bams/{sample_name}.bam'
+    output: 'inferred_experiment/{sample_name}.txt'
+    resources:
+        mem_mb=10000
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && \
+        infer_experiment.py -r {GENE_BED} -i {input} 2>&1 > {output}
+        '''
+
+
+rule create_tracks:
+    input: 'mapped/bams/{sample_name}.bam'
+    params:
+        prefix = 'tracks/{sample_name}',
+    output:
+        bedgraph = 'tracks/{sample_name}.bedGraph',
+        bigwig = 'tracks/{sample_name}.bw'
+    shell:
+        r'''
+        export LC_ALL=en_US.UTF-8 && \
+        source activate {PYTHON2ENV} && python {SRC_DIR}/create_normalized_tracks.py\
+                                        --bam {input}\
+                                        --genome {CHROM_SIZES}\
+                                        --prefix {params.prefix}\
+                                        --normalize
+        '''
+
+
+rule run_multiqc:
+    input:
+        expand('qc/{sample_name}_fastqc.html', sample_name=SAMPLE_NAMES),
+        expand('mapped/post_mapping_deduplication/{sample_name}/output.DupRate_plot.r', sample_name=SAMPLE_NAMES),
+        expand('mapped/post_mapping_qualimap/{sample_name}/qualimapReport.html', sample_name=SAMPLE_NAMES),
+        expand('mapped/bams/{sample_name}.bam', sample_name=SAMPLE_NAMES),
+    output:
+        'multiqc_report/multiqc_report.html'
+    resources:
+        mem_mb=10000
+    shell:
+        r'''
+            export LC_ALL=en_US.UTF-8 && multiqc -f --outdir multiqc_report .
+        '''
+
+
+rule count_coverage:
+    input: 'mapped/bams/{sample_name}.bam'
+    output: 'pickled_data/{sample_name}.coverage.pickle'
+    resources:
+        mem_mb=30000
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && python {SRC_DIR}/coverage.py {input} {output}
+        '''
+
+
+rule count_fragment_lengths:
+    input: 'mapped/bams/{sample_name}.bam'
+    output: 'pickled_data/{sample_name}.fragment_lengths.pickle'
+    resources:
+        mem_mb=30000
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && python {SRC_DIR}/query_lengths.py {input} {output}
+        '''
+
+
+rule count_coverage_start_codons:
+    input: 'mapped/bams/{sample_name}.bam'
+    output: 'pickled_data/{sample_name}.coverage_start_codons.pickle'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''source activate {PYTHON2ENV} && \
+        python {SRC_DIR}/coverage_startcodons.py {input} {output} \
+        {START_CODON_BED} {STOP_CODON_BED}'''
+
+rule counts_to_tpm:
+    input: 'mapped/HTSeq/byCDS/{sample_name}.CDS.counts.tsv'
+    output: 'mapped/HTSeq/byCDS/{sample_name}.CDS.tpm.tsv'
+    shell:
+        r'''source activate {PYTHON2ENV} && \
+        python {SRC_DIR}/counts_to_tpm.py {input} {output} {CDS_BED}'''
+
+rule start_codon_pileup_corr:
+    input:
+        tpm = 'mapped/HTSeq/byCDS/{sample_name}.CDS.tpm.tsv',
+        bw = 'mapped/bigWigs/{sample_name}.{endtype}.{strand}.bw',
+    output: 'start_codon_summaries/{sample_name}.{endtype}.{strand}.good.tsv',
+    params:
+        prefix = 'start_codon_summaries/{sample_name}.{endtype}.{strand}',
+    shell:
+        r'''source activate {PYTHON2ENV} && \
+        python {SRC_DIR}/start_codon_pileup_tpm_corr.py {input.tpm} {input.bw} {CDS_BED} {params.prefix}
+        '''

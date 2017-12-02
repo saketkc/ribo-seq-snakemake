@@ -9,7 +9,7 @@ import glob
 import re
 
 SAMPLES = glob.glob('{}/*.fastq.gz'.format(RAWDATA_DIR), recursive=False)
-SAMPLES = sorted([sample.replace('{}'.format(RAWDATA_DIR),'').replace('.fastq.gz','') for sample in SAMPLES])
+SAMPLES = sorted([sample.replace('{}/'.format(RAWDATA_DIR),'').replace('.fastq.gz','') for sample in SAMPLES])
 #STRANDS = ['pos', 'neg', 'both']
 STRANDS = ['both']
 #ENDTYPE = ['5prime', '3prime', 'either']
@@ -38,7 +38,13 @@ rule all:
         expand('mapped/bigWigs/{sample}.{endtype}.{strand}.bw', sample=SAMPLES,
                                                                      endtype=ENDTYPE,
                                                                      strand=STRANDS),
-        expand('mapped/metagene_pickled_data/{sample}.{endtype}.{strand}_metagene.pickle', sample=SAMPLES,
+        expand('metagene_pickled_data_UTR5/{sample}.{endtype}.{strand}_metagene_normalized.pickle', sample=SAMPLES,
+                                                                     endtype=ENDTYPE,
+                                                                     strand=STRANDS),
+        expand('metagene_pickled_data_CDS_offset60/{sample}.{endtype}.{strand}_metagene_normalized.pickle', sample=SAMPLES,
+                                                                     endtype=ENDTYPE,
+                                                                     strand=STRANDS),
+        expand('metagene_pickled_data_UTR3/{sample}.{endtype}.{strand}_metagene_normalized.pickle', sample=SAMPLES,
                                                                      endtype=ENDTYPE,
                                                                      strand=STRANDS),
 
@@ -405,11 +411,91 @@ rule count_coverage_lengthfiltered:
 
 rule genelevel_normalized_counts:
     input: 'mapped/bigWigs/{sample}.{endtype}.{strand}.bw'
-    output: 
+    output:
         metagene = 'mapped/metagene_pickled_data/{sample}.{endtype}.{strand}_metagene.pickle',
-        genewise = 'mapped/metagene_pickled_data/{sample}.{endtype}.{strand}_genewise.pickle',
     params:
         prefix = 'mapped/metagene_pickled_data/{sample}.{endtype}.{strand}'
     shell:
         r'''source activate {PYTHON2ENV} && python {SRC_DIR}/coverage_bigwig_cds.py {input} {CDS_BED} {params.prefix}'''
+
+rule genelevel_normalized_counts_utr5:
+    input:
+        bw = 'mapped/bigWigs/{sample}.{endtype}.{strand}.bw',
+        htseq = 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
+    version: '0.2.0'
+    output:
+        metagene = 'metagene_pickled_data_UTR5/{sample}.{endtype}.{strand}_metagene_normalized.pickle',
+    resources:
+        mem_mb=60000
+    params:
+        prefix = 'metagene_pickled_data_UTR5/{sample}.{endtype}.{strand}',
+        offset = 0,
+        top_n_meta = 1000,
+        top_n_gene = 50,
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && \
+        python {SRC_DIR}/metagene_counter.py --bigwig {input.bw} \
+        --htseq_f {input.htseq} \
+        --region_bed_f {UTR5_BED} \
+        --master_offset {params.offset} \
+        --top_n_meta {params.top_n_meta} \
+        --top_n_gene {params.top_n_gene} \
+        --prefix {params.prefix}
+        '''
+
+
+
+rule genelevel_normalized_counts_utr3:
+    input:
+        bw = 'mapped/bigWigs/{sample}.{endtype}.{strand}.bw',
+        htseq = 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
+    version: '0.2.0'
+    output:
+        metagene = 'metagene_pickled_data_UTR3/{sample}.{endtype}.{strand}_metagene_normalized.pickle',
+    resources:
+        mem_mb=60000
+    params:
+        prefix = 'metagene_pickled_data_UTR3/{sample}.{endtype}.{strand}',
+        offset = 0,
+        top_n_meta = 1000,
+        top_n_gene = 50,
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && \
+        python {SRC_DIR}/metagene_counter.py --bigwig {input.bw} \
+        --htseq_f {input.htseq} \
+        --region_bed_f {UTR3_BED} \
+        --master_offset {params.offset} \
+        --top_n_meta {params.top_n_meta} \
+        --top_n_gene {params.top_n_gene} \
+        --prefix {params.prefix}
+        '''
+
+
+rule genelevel_normalized_counts_cds_offset60:
+    input:
+        bw = 'mapped/bigWigs/{sample}.{endtype}.{strand}.bw',
+        htseq = 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
+    version: '0.2.0'
+    output:
+        metagene = 'metagene_pickled_data_CDS_offset60/{sample}.{endtype}.{strand}_metagene_normalized.pickle',
+    resources:
+        mem_mb=60000
+    params:
+        prefix = 'metagene_pickled_data_CDS_offset60/{sample}.{endtype}.{strand}',
+        offset = 60,
+        top_n_meta = 1000,
+        top_n_gene = 50,
+    shell:
+        r'''
+        source activate {PYTHON2ENV} && \
+        python {SRC_DIR}/metagene_counter.py --bigwig {input.bw} \
+        --htseq_f {input.htseq} \
+        --region_bed_f {CDS_BED} \
+        --master_offset {params.offset} \
+        --top_n_meta {params.top_n_meta} \
+        --top_n_gene {params.top_n_gene} \
+        --prefix {params.prefix}
+        '''
 
