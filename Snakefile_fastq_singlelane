@@ -54,9 +54,9 @@ rule create_index:
         GENOME_FASTA,
         GTF
     output: STAR_INDEX
-    threads: 16
+    threads: 15
     shell:
-        r'''mkdir -p {output} && STAR --runThreadN 16\
+        r'''mkdir -p {output} && STAR --runThreadN 15\
             --runMode genomeGenerate \
             --genomeDir {output} \
             --genomeFastaFiles {input[0]}\
@@ -99,7 +99,7 @@ rule map_star:
         prefix = 'mapped/bams/{sample_name}',
         unmapped = 'unmapped/fastq/{sample_name}',
         starlogs = 'mapped/starlogs'
-    threads: 16
+    threads: 15
     shell:
         r'''
         STAR --runThreadN {threads}\
@@ -166,7 +166,7 @@ rule featurecounts_ribo:
     params:
         annotation=GTF
     output: 'mapped/featureCounts/byExon/fcounts.exon.tsv'
-    threads: 16
+    threads: 15
     shell:
         r'''featureCounts -s 1 -a {params.annotation} -o {output} -t exon -g gene_id -Q 4 -T {threads} {input}'''
 
@@ -175,7 +175,7 @@ rule featurecounts_cds:
     params:
         annotation=GTF
     output: 'mapped/featureCounts/byCDS/fcounts.CDS.tsv'
-    threads: 16
+    threads: 15
     shell:
         r'''featureCounts -s 1 -a {params.annotation} -o {output} -t CDS -g gene_id -Q 4 -T {threads} {input}'''
 

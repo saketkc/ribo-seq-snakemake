@@ -1,15 +1,15 @@
 __default__:
     q: 'cmb'
     time: '7:00:00'
-    mem: '100000MB'
+    mem: '20000MB'
     cores: 1
     logdir: '/home/cmb-06/as/skchoudh/logs/'
 
 create_index:
-    cores: 16
+    cores: 15
     mem: '61000MB'
 
 map_star:
     time: '12:00:00'
-    cores: 16
-    mem: '61000MB'
+    cores: 15
+    mem: '60000MB'

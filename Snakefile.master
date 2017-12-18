@@ -14,6 +14,7 @@ RSEM_INDEX_PREFIX = None
 INTRON_BED = None
 include:
     'configs/Nov_11_2017_Penalva_U343_MSI1_RPS5.py'
+    #'configs/Dec_12_2016_Penalva_Musashi1_U251.py'
 
 workdir: OUT_DIR
 
@@ -87,6 +88,8 @@ for sample in SAMPLES:
     SAMPLE_LANE.append((sample_name, lane_name))
 
 SAMPLE_LANE = set(SAMPLE_LANE)
+print(SAMPLES)
+print(SAMPLE_LANE)
 SAMPLE_LANE = sorted(SAMPLE_LANE, key=lambda tup: tup[0])
 SAMPLE_NAMES, LANE_NAMES = zip(*SAMPLE_LANE)
 SAMPLE_NAMES_U = sorted(set(SAMPLE_NAMES))
@@ -108,6 +111,8 @@ rule all:
                                                                      strand=STRANDS),
 
         expand('mapped/HTSeq/byExon/{sample_name}.exon.counts.tsv', sample_name=SAMPLE_NAMES),
+        expand('mapped/HTSeq_reversestrand/byExon/{sample_name}.exon.counts.tsv', sample_name=SAMPLE_NAMES),
+        expand('mapped/HTSeq_nostrand/byExon/{sample_name}.exon.counts.tsv', sample_name=SAMPLE_NAMES),
         expand('mapped/HTSeq/byCDS/{sample_name}.CDS.counts.tsv', sample_name=SAMPLE_NAMES),
         expand('mapped/HTSeq/byCDS/{sample_name}.CDS.tpm.tsv', sample_name=SAMPLE_NAMES),
         expand('pickled_data/{sample_name}.fragment_lengths.pickle', sample_name=SAMPLE_NAMES),
@@ -127,7 +132,8 @@ rule all:
                                                                      strand=STRANDS),
         expand('tracks/{sample_name}.bw', sample_name=SAMPLE_NAMES),
         expand('tracks/{sample_name}.bedGraph', sample_name=SAMPLE_NAMES),
-
+        expand('mapped/bams/{sample_name}.bam.bai', sample_name=SAMPLE_NAMES),
+        
 rule create_rsem_index:
     input:
         GENOME_FASTA,
@@ -199,6 +205,7 @@ rule map_star:
         txbam='mapped/lanewise_tx_bams/{sample_name}_{lane}.bam',
         counts='mapped/lanewise_STARcounts/{sample_name}_{lane}.counts'
     params:
+        name = '{sample_name}_{lane}',
         prefix = 'mapped/lanewise_bams/{sample_name}_{lane}',
         unmapped = 'unmapped/lanewise_fastq/{sample_name}_{lane}',
         starlogs = 'mapped/starlogs',
@@ -213,12 +220,12 @@ rule map_star:
              --alignIntronMin {ALIGN_INTRON_Nmin}\
              --alignIntronMax {ALIGN_INTRON_Nmax}\
              --outFileNamePrefix {params.prefix} --readFilesIn {input.R1}\
-             --outSAMtype BAM SortedByCoordinate\
              --readFilesCommand zcat\
              --quantMode TranscriptomeSAM GeneCounts\
-             --outReadsUnmapped {params.unmapped}\
-             --limitBAMsortRAM 5627085936\
-             && mv {params.prefix}Aligned.sortedByCoord.out.bam {output.bam}\
+             --outSAMtype BAM Unsorted\
+             --outTmpDir /tmp/{params.name}\
+             --outReadsUnmapped Fastx\
+             && samtools sort {params.prefix}Aligned.out.bam -o {output.bam} -T /tmp/{params.name}_sort\
              && mv {params.prefix}Aligned.toTranscriptome.out.bam {output.txbam}\
              && samtools index {output.bam}\
              && mv {params.prefix}ReadsPerGene.out.tab {output.counts}\
@@ -446,6 +453,16 @@ rule sort_by_name:
         samtools sort -on {input} -T /tmp/ -o {output} && samtools index {output}
         '''
 
+rule sam_index:
+    input: 'mapped/bams/{sample_name}.bam'
+    output: 'mapped/bams/{sample_name}.bam.bai'
+    resources:
+        mem_mb=20000
+    shell:
+        r'''
+        samtools index {input}
+        '''
+
 
 rule count_exon:
     input: 'mapped/bams/{sample_name}.sortedByName.bam'
@@ -459,6 +476,36 @@ rule count_exon:
         r'''source activate {PYTHON2ENV} && \
         htseq-count --order=name --format=bam --mode=intersection-strict \
         --stranded=yes --minaqual={params.phred_cutoff} --type=exon \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
+
+rule count_exon_no_strand:
+    input: 'mapped/bams/{sample_name}.sortedByName.bam'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq_nostrand/byExon/{sample_name}.exon.counts.tsv'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''source activate {PYTHON2ENV} && \
+        htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=no --minaqual={params.phred_cutoff} --type=exon \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
+
+rule count_exon_reverse_strand:
+    input: 'mapped/bams/{sample_name}.sortedByName.bam'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq_reversestrand/byExon/{sample_name}.exon.counts.tsv'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''source activate {PYTHON2ENV} && \
+        htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=reverse --minaqual={params.phred_cutoff} --type=exon \
         --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
         && [[ -s {output} ]]'''
 
