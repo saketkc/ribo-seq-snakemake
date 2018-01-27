@@ -142,9 +142,8 @@ rule all:
         expand('tracks/{sample_name}.bw', sample_name=SAMPLE_NAMES),
         expand('tracks/{sample_name}.bedGraph', sample_name=SAMPLE_NAMES),
         expand('mapped/bams/{sample_name}.bam.bai', sample_name=SAMPLE_NAMES),
-        expand('mapped/unique_mapping_bedGraphs/{sample_name}.{endtype}.{strand}.bedGraph', sample_name=SAMPL
-                                                                                            endtype=ENDTYPE,
-rule create_rsem_index:                                                                     strand=STRANDS),
+        
+rule create_rsem_index:
     input:
         GENOME_FASTA,
         GTF
@@ -695,40 +694,36 @@ rule start_codon_pileup_corr:
         python {SRC_DIR}/start_codon_pileup_tpm_corr.py {input.tpm} {input.bw} {CDS_BED} {params.prefix}
         '''
 
-rule extract_uniq_mapped_reads:
-    input: 'mapped/bams/{sample_name}.bam'
-    output: 'mapped/unique_mapping_bams/{sample_name}.bam'
-    shell:
-        r'''samtools view -q255 {input} -o {output}.unsorted && samtools sort -o {output} {output}.unsorted && rm {output}.unsorted\
-        && samtools index {output}'''
+
+"""
+The RiboTaper workflow consists of:
 
 
-rule create_bedgraph_uniq_mapped:
-    input: 'mapped/unique_mapping_bams/{sample_name}.bam'
+1) Creation of annotation files, for all annotated genes
+
+2) Data tracks creation from Ribo-seq + RNA-seq experiments, dependent on P-sites calculation cutoffs.
+
+3) Analysis of translation on exonic regions + quality control
+
+4) ORF finding in coding and non-coding regions
+
+5) Creation of custom peptide fasta database
+
+"""
+
+rule create_ribotaper_annotation:
+    input:
+        gtf=GTF,
+        fasta=GENOME_FASTA
     params:
-        strand = '{strand}',
-        endtype = '{endtype}'
+        use_ccdsid='true',
+        use_appris='true',
+        outdir=RIBOTAPER_ANNOT_DIR
     output:
-        bg = 'mapped/unique_mapping_bedGraphs/{sample_name}.{endtype}.{strand}.bedGraph',
-        bw = 'mapped/unique_mapping_bigWigs/{sample_name}.{endtype}.{strand}.bw',
-    resources:
-        mem_mb=30000
-    run:
-        if params.endtype == '5prime':
-            extra_args = '-5'
-        elif params.endtype == '3prime':
-            extra_args = '-3'
-        elif params.endtype == 'either':
-            extra_args = ''
-        if params.strand == 'both':
-            shell(r''' bedtools genomecov -ibam {input} -bg {extra_args} > {output.bg}\
-            && bedSort {output.bg} {output.bg} \
-            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
-        elif params.strand == 'pos':
-            shell(r''' bedtools genomecov -ibam {input} -bg -strand + {extra_args} > {output.bg}\
-            && bedSort {output.bg} {output.bg} \
-            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
-        elif params.strand == 'neg':
-            shell(r''' bedtools genomecov -ibam {input} -bg -strand - {extra_args} > {output.bg}\
-            && bedSort {output.bg} {output.bg} \
-            && bedGraphToBigWig {output.bg} {CHROM_SIZES} {output.bw}''')
+        cds = RIBOTAPER_ANNOT_DIR +'/all_cds.bed',
+        start_stop = RIBOTAPER_ANNOT_DIR + '/start_stops_FAR.bed',
+    shell:
+        r'''
+            create_annotation_files.bash {input.gtf} {input.fasta} {params.ccdsid} {params.use_ccdsid} {params.appris} {params.outdir}
+        '''
+

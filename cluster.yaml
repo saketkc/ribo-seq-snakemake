@@ -1,7 +1,7 @@
 __default__:
     q: 'cmb'
     time: '7:00:00'
-    mem: '20000MB'
+    mem: '4000MB'
     cores: 1
     logdir: '/home/cmb-06/as/skchoudh/logs/'
 
@@ -13,3 +13,33 @@ map_star:
     time: '12:00:00'
     cores: 15
     mem: '60000MB'
+
+count_cds:
+    mem: '40000MB'
+
+count_exon:
+    mem: '40000MB'
+
+count_exon_no_strand:
+    mem: '40000MB'
+
+count_exon_reverse_strand:
+    mem: '40000MB'
+
+create_tracks:
+    mem: '40000MB'
+
+count_coverage:
+    mem: '40000MB'
+
+count_fragment_lengths:
+    mem: '40000MB'
+
+genelevel_normalized_counts_utr5:
+    mem: '40000MB'
+
+genelevel_normalized_counts_utr3:
+    mem: '40000MB'
+
+genelevel_normalized_counts_cds_offset60:
+    mem: '40000MB'
