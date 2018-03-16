@@ -1,7 +1,7 @@
 __default__:
     q: 'cmb'
     time: '7:00:00'
-    mem: '4000MB'
+    mem: '10000MB'
     cores: 1
     logdir: '/home/cmb-06/as/skchoudh/logs/'
 
@@ -72,4 +72,9 @@ genelevel_normalized_counts_offset30:
 genelevel_normalized_counts_offset0:
     time: '10:00:00'
     mem: '60000MB'
+
+extract_uniq_mapped_reads:
+    time: '10:00:00'
+    mem: '60000MB'
+    cores: 16
 

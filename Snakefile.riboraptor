@@ -1,0 +1,597 @@
+shell.executable("/bin/bash")
+shell.prefix("source ~/.bashrc; ")
+
+from collections import defaultdict
+import os
+import sys
+from itertools import chain
+from os.path import join
+import glob
+import re
+import pandas as pd
+import numpy as np
+
+RSEM_INDEX_PREFIX = None
+INTRON_BED = None
+
+
+include:
+    config['config_path']
+
+workdir: OUT_DIR
+
+
+if not RSEM_INDEX_PREFIX:
+    RSEM_INDEX_PREFIX = STAR_INDEX.replace('star_annotated', 'rsem_index').replace('star_index', 'rsem_index')
+
+
+if not INTRON_BED:
+    INTRON_BED = CDS_BED.replace('cds', 'intron')
+
+
+def get_strandedness(filepath):
+    with open(filepath) as f:
+        data = f.read()
+    splitted = [x.strip() for x in data.split('\n') if len(x.strip())>=1]
+    strandedness = None
+    assert splitted[0] == 'This is SingleEnd Data'
+    few_percentage = None
+    rev_percentage = None
+    for line in splitted[1:]:
+        if 'Fraction of reads failed to determine:' in line:
+            continue
+        elif 'Fraction of reads explained by "++,--":' in line:
+            fwd_percentage = float(line.split(':')[1])
+        elif 'Fraction of reads explained by "+-,-+":' in line:
+            rev_percentage = float(line.split(':')[1])
+
+    assert rev_percentage is not None
+    assert fwd_percentage is not None
+
+    ratio = fwd_percentage/rev_percentage
+
+    if np.isclose([ratio], [1]):
+        return 'none'
+    elif ratio>=0.5:
+            return 'forward'
+    else:
+        return 'reverse'
+
+
+def total_genome_size():
+    df = pd.read_table(CHROM_SIZES, names=['chrom', 'sizes'])
+    total = df['sizes'].sum()
+    return total
+
+
+def get_align_intro_params():
+    df = pd.read_table(INTRON_BED, names=['chrom', 'start', 'end', 'name', 'score', 'strand'])
+    lengths = df['end'] - df['start']
+
+    ## Based on small genomes. See https://groups.google.com/forum/#!topic/rna-star/hQeHTBbkc0c
+    alignintronNmin = max(4, lengths.min())
+    alignintronNmax = lengths.max()
+    return alignintronNmin, alignintronNmax
+
+ALIGN_INTRON_Nmin, ALIGN_INTRON_Nmax = get_align_intro_params()
+TOTAL_GENOME_SIZE = total_genome_size()
+## Small genome optimization
+## See STAR manual 2.2.5
+SA_INDEX_Nbases = int(np.floor(min(14, np.log2(TOTAL_GENOME_SIZE)/2.0-1)))
+
+SAMPLES = glob.glob('{}**/*.fastq.gz'.format(RAWDATA_DIR), recursive=False)
+print(SAMPLES)
+SAMPLE_LANE = []
+for sample in SAMPLES:
+    sample = sample.replace('{}/'.format(RAWDATA_DIR),'')
+    lane_name = re.search(r'L\d\d\d', sample).group()
+    sample = re.split(r'_L\d\d\d_', sample)[0]
+    print(sample)
+    SAMPLE_LANE.append((sample, lane_name))
+
+SAMPLE_LANE = set(SAMPLE_LANE)
+#print(SAMPLES)
+SAMPLE_LANE = sorted(SAMPLE_LANE, key=lambda tup: tup[0])
+print(SAMPLE_LANE)
+sampleS, LANE_NAMES = zip(*SAMPLE_LANE)
+sampleS_U = sorted(set(sampleS))
+
+
+SAMPLEWISE_LANES = defaultdict(list)
+for sample, lane in SAMPLE_LANE:
+    SAMPLEWISE_LANES[sample].append(lane)
+
+STRANDS = ['both']
+ENDTYPE = ['5prime']
+LENGTH_RANGES = ['{}-{}'.format(l, l) for l in range(21, 37)]
+
+
+def merge_bams_input(wildcards):
+    return ['mapped/lanewise_bams/{}_{}.bam'.format(wildcards.sample, lane) for lane in SAMPLEWISE_LANES[wildcards.sample] ]
+
+def sra_to_fastq_input(wildcards):
+    srr_id = wildcards.sample
+    for key in list(SRX_ID_DICT.keys()):
+        value = SRX_ID_DICT[key]
+        if srr_id in list(value):
+            srx_id = key
+            return str(os.path.join(RAWDATA_DIR, srx_id, srr_id+'.sra'))
+    print("WRONG encodeterend: {}".format(srr_id))
+rule all:
+    input:
+        expand('qc/{sample}_{lane}_R1_001_fastqc.html', zip, sample=sampleS, lane=LANE_NAMES),
+        expand('preprocessed/{sample}_{lane}_R1_001_trimmed.fq.gz', zip, sample=sampleS, lane=LANE_NAMES),
+        expand('mapped/lanewise_bams/{sample}_{lane}.bam', zip, sample=sampleS, lane=LANE_NAMES),
+        expand('inferred_experiment/{sample}.txt', sample=sampleS),
+        expand('mapped/bams/{sample}.bam', sample=sampleS),
+        expand('mapped/bams_sortedByName/{sample}.sortedByName.bam', sample=sampleS),
+        expand('mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv', sample=sampleS),
+        expand('mapped/HTSeq/byExon/{sample}.exon.counts.tsv', sample=sampleS),
+        expand('mapped/bigWigs/{sample}Multiple.bw', sample=sampleS),
+        expand('mapped/bigWigs/{sample}Unique.bw', sample=sampleS),
+        expand('mapped/bigWigs_normalized/{sample}Multiple.bw', sample=sampleS),
+        expand('mapped/bigWigs_normalized/{sample}Unique.bw', sample=sampleS),
+        expand('mapped/counts_pickled_data/UTR5/{sample}_counts.pickle', sample=sampleS),
+        expand('mapped/counts_pickled_data/CDS/{sample}_counts.pickle', sample=sampleS),
+        expand('mapped/counts_pickled_data/UTR3/{sample}_counts.pickle', sample=sampleS),
+        expand('mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_normalized.pickle', sample=sampleS),
+        expand('mapped/plots/metagene/CDS/normalized/{sample}.png', sample=sampleS),
+        expand('mapped/plots/fragment_length_dist/{sample}.png', sample=sampleS),
+
+
+
+rule create_rsem_index:
+    input:
+        GENOME_FASTA,
+        GTF
+    output: RSEM_INDEX_PREFIX + '.chrlist'
+    params:
+        prefix = RSEM_INDEX_PREFIX
+    resources:
+        mem_mb=61000
+    threads: 16
+    shell:
+        r'''rsem-prepare-reference --gtf {GTF} \
+            --star \
+            --num-threads {threads} \
+            {GENOME_FASTA} \
+            {params.prefix}
+        '''
+
+
+rule create_index:
+    input:
+        fasta=GENOME_FASTA,
+        gtf=GTF
+    output: STAR_INDEX
+    resources:
+        mem_mb=61000
+    threads: 16
+    shell:
+        r'''mkdir -p {output} && STAR --runThreadN {threads}\
+        --runMode genomeGenerate \
+        --genomeDir {output} \
+        --genomeSAindexNbases {SA_INDEX_Nbases} \
+        --genomeFastaFiles {input.fasta}\
+        --sjdbGTFfile {input.gtf}'''
+
+
+rule perform_qc:
+    input:
+        R1=RAWDATA_DIR+'/{sample}_{lane}_R1_001.fastq.gz',
+    params:
+        out_dir = 'qc'
+    output:
+       'qc/{sample}_{lane}_R1_001_fastqc.html',
+       'qc/{sample}_{lane}_R1_001_fastqc.zip',
+    resources:
+        mem_mb=10000
+    shell:
+        r'''fastqc -o {params.out_dir} -f fastq {input.R1}
+        '''
+
+
+rule perfom_trimming:
+    input:
+        R1=RAWDATA_DIR+'/{sample}_{lane}_R1_001.fastq.gz',
+    params:
+        out_dir='preprocessed/',
+        phred_cutoff=5
+    benchmark: 'benchmarks/perfom_trimming/{sample}.txt'
+    output:
+        'preprocessed/{sample}_{lane}_R1_001_trimmed.fq.gz',
+    resources:
+        mem_mb=10000
+    shell:
+        r'''
+        trim_galore -o {params.out_dir} -q {params.phred_cutoff} {input.R1}
+        '''
+
+
+rule map_star:
+    input:
+        R1='preprocessed/{sample}_{lane}_R1_001_trimmed.fq.gz',
+        index=STAR_INDEX
+    version: "1.0.txSAM"
+    output:
+        bam='mapped/lanewise_bams/{sample}_{lane}.bam',
+        txbam='mapped/lanewise_tx_bams/{sample}_{lane}.bam',
+        counts='mapped/lanewise_STARcounts/{sample}_{lane}.counts'
+    params:
+        name = '{sample}_{lane}',
+        prefix = 'mapped/lanewise_bams/{sample}_{lane}',
+        unmapped = 'unmapped/lanewise_fastq/{sample}_{lane}',
+        starlogs = 'mapped/starlogs',
+    resources:
+        mem_mb=61000
+    threads: 16
+    shell:
+        r'''
+        STAR --runThreadN {threads}\
+             --genomeDir {input.index}\
+             --outFilterMismatchNmax 2\
+             --alignIntronMin {ALIGN_INTRON_Nmin}\
+             --alignIntronMax {ALIGN_INTRON_Nmax}\
+             --outFileNamePrefix {params.prefix}\
+             --readFilesIn {input.R1}\
+             --readFilesCommand zcat\
+             --quantMode TranscriptomeSAM GeneCounts\
+             --outSAMtype BAM Unsorted\
+             --outTmpDir /tmp/{params.name}_tmp\
+             --outFilterType BySJout\
+             --outFilterMatchNmin 16\
+             && samtools sort -@ {threads} {params.prefix}Aligned.out.bam -o {output.bam} -T /tmp/{params.name}_sort\
+             && mv {params.prefix}Aligned.toTranscriptome.out.bam {output.txbam}\
+             && samtools index {output.bam}\
+             && mv {params.prefix}ReadsPerGene.out.tab {output.counts}\
+             && mkdir -p {params.starlogs}\
+             && mv {params.prefix}Log.final.out {params.prefix}Log.out {params.prefix}SJ.out.tab\
+             {params.prefix}Log.progress.out {params.starlogs}\
+             && mkdir -p {params.unmapped}
+        '''
+#&& mv {params.prefix}Unmapped.out.mate1 {output.unmapped_fastq}\
+##&& gzip {output.unmapped_fastq}
+## --outReadsUnmapped Fastx\
+rule infer_experiment:
+    input:  'mapped/bams/{sample}.bam'
+    output: 'inferred_experiment/{sample}.txt'
+    resources:
+        mem_mb=10000
+    shell:
+        r'''source activate {PYTHON2ENV} \
+        && infer_experiment.py -r {GENE_BED} -i {input} 2>&1 > {output}
+        '''
+
+rule merge_bams:
+    input: merge_bams_input
+    threads: 16
+    benchmark: 'benchmarks/merge_bams/{sample}.txt'
+    output: 'mapped/bams/{sample}.bam'
+    run:
+        cmd = ' -in '.join(input)
+        shell(r'''bamtools merge -in {cmd} -out {output}.unsorted \
+        && samtools sort -@ {threads} -T /tmp/{wildcards.sample}_merge_bam -o {output} {output}.unsorted \
+        && samtools index {output} \
+        && yes | rm -rf {output}.unsorted''')
+
+
+rule create_uniq_bedgraph_from_bam_raw:
+    input: 'mapped/bams/{sample}.bam'
+    benchmark: 'benchmarks/create_uniq_bedgraph_from_bam_raw/{sample}.txt'
+    threads: 16
+    params:
+        prefix = 'mapped/bedGraphs/{sample}',
+    output:
+        bg_unique = 'mapped/bedGraphs/{sample}Unique.bg',
+        bg_multiple = 'mapped/bedGraphs/{sample}Multiple.bg',
+    shell:
+        r'''STAR --runThreadN {threads}\
+        --runMode inputAlignmentsFromBAM\
+        --inputBAMfile {input} \
+        --outWigType bedGraph read1_5p \
+        --outWigNorm None\
+        --outWigStrand Unstranded\
+        --outFileNamePrefix {params.prefix} &&\
+        mv {params.prefix}Signal.Unique.str1.out.bg {output.bg_unique} &&\
+        mv {params.prefix}Signal.UniqueMultiple.str1.out.bg {output.bg_multiple} &&\
+        bedSort {output.bg_unique} {output.bg_unique} &&\
+        bedSort {output.bg_multiple} {output.bg_multiple}
+        '''
+
+rule create_uniq_bigwig_from_uniq_bedgraph_raw:
+    input: 'mapped/bedGraphs/{sample}Unique.bg',
+    benchmark: 'benchmarks/create_uniq_bigwig_from_uniq_bedgraph_raw/{sample}.txt'
+    output: 'mapped/bigWigs/{sample}Unique.bw',
+    shell:
+        r'''bedGraphToBigWig {input} {CHROM_SIZES} {output}'''
+
+
+rule create_uniqmulti_bigwig_from_uniqmulti_bedgraph_raw:
+    input: 'mapped/bedGraphs/{sample}Multiple.bg',
+    benchmark: 'benchmarks/create_uniqmulti_bigwig_from_uniqmulti_bedgraph_raw/{sample}.txt'
+    output: 'mapped/bigWigs/{sample}Multiple.bw',
+    shell:
+        r'''bedGraphToBigWig {input} {CHROM_SIZES} {output}'''
+
+
+rule create_uniq_bedgraph_from_bam_normalized_normalized:
+    input: 'mapped/bams/{sample}.bam'
+    benchmark: 'benchmarks/create_uniq_bedgraph_from_bam_normalized_normalized/{sample}.txt'
+    threads: 16
+    params:
+        prefix = 'mapped/bedGraphs_normalized/{sample}',
+    output:
+        bg_unique = 'mapped/bedGraphs_normalized/{sample}Unique.bg',
+        bg_multiple = 'mapped/bedGraphs_normalized/{sample}Multiple.bg',
+    shell:
+        r'''STAR --runThreadN {threads}\
+        --runMode inputAlignmentsFromBAM\
+        --inputBAMfile {input} \
+        --outWigType bedGraph read1_5p \
+        --outWigNorm RPM\
+        --outWigStrand Unstranded\
+        --outFileNamePrefix {params.prefix} &&\
+        mv {params.prefix}Signal.Unique.str1.out.bg {output.bg_unique} &&\
+        mv {params.prefix}Signal.UniqueMultiple.str1.out.bg {output.bg_multiple} &&\
+        bedSort {output.bg_unique} {output.bg_unique} &&\
+        bedSort {output.bg_multiple} {output.bg_multiple}
+        '''
+
+rule create_uniq_bigwig_from_uniq_bedgraph_normalized:
+    input: 'mapped/bedGraphs_normalized/{sample}Unique.bg',
+    benchmark: 'benchmarks/create_uniq_bigwig_from_uniq_bedgraph_normalized/{sample}.txt'
+    output: 'mapped/bigWigs_normalized/{sample}Unique.bw',
+    shell:
+        r'''bedGraphToBigWig {input} {CHROM_SIZES} {output}'''
+
+
+rule create_uniqmulti_bigwig_from_uniqmulti_bedgraph_normalized:
+    input: 'mapped/bedGraphs_normalized/{sample}Multiple.bg',
+    benchmark: 'benchmarks/create_uniqmulti_bigwig_from_uniqmulti_bedgraph_normalized/{sample}.txt'
+    output: 'mapped/bigWigs_normalized/{sample}Multiple.bw',
+    shell:
+        r'''bedGraphToBigWig {input} {CHROM_SIZES} {output}'''
+
+
+rule sort_by_name:
+    input: 'mapped/bams/{sample}.bam'
+    threads: 16
+    benchmark: 'benchmarks/sort_by_name/{sample}.txt'
+    output: 'mapped/bams_sortedByName/{sample}.sortedByName.bam'
+    resources:
+        mem_mb=20000
+    shell:
+        r'''samtools sort -@ {threads} -on {input} -T /tmp/{wildcards.sample}_sort_by_name -o {output} && samtools index {output}
+        '''
+
+rule count_exon:
+    input: 'mapped/bams_sortedByName/{sample}.sortedByName.bam'
+    benchmark: 'benchmarks/count_exon/{sample}.txt'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq/byExon/{sample}.exon.counts.tsv'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=yes --minaqual={params.phred_cutoff} --type=exon \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
+
+
+rule count_cds:
+    input: 'mapped/bams_sortedByName/{sample}.sortedByName.bam'
+    benchmark: 'benchmarks/count_cds/{sample}.txt'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=yes --minaqual={params.phred_cutoff} --type=CDS \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
+
+
+rule fragment_length_pickle:
+    input: 'mapped/bams/{sample}.bam'
+    benchmark: 'benchmarks/fragment_length_pickle/{sample}.txt'
+    params:
+        prefix= 'mapped/fragment_length_pickle/{sample}'
+    output: 'mapped/fragment_length_pickle/{sample}.pickle'
+    shell:
+        r'''riboraptor read-length-dist --bam {input} --prefix {params.prefix}'''
+
+
+rule metagene_coverage_utr5:
+    input:
+        bw = 'mapped/bigWigs/{sample}Unique.bw',
+        htseq = 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
+    benchmark: 'benchmarks/metagene_coverage_utr5/{sample}.txt'
+    output:
+        metagene_normalized = 'mapped/metagene_pickled_data/UTR5/{sample}_metagene_normalized.pickle',
+        metagene_raw = 'mapped/metagene_pickled_data/UTR5/{sample}_metagene_raw.pickle',
+        topgene = 'mapped/metagene_pickled_data/UTR5/{sample}_topgene_normalized.pickle',
+    resources:
+        mem_mb=60000
+    params:
+        prefix = 'mapped/metagene_pickled_data/UTR5/{sample}',
+        offset = 0,
+        top_n_meta = 1000,
+        top_n_gene = 10,
+    shell:
+        r'''riboraptor metagene-coverage --bigwig {input.bw} \
+        --htseq_f {input.htseq} \
+        --region_bed {UTR5_BED} \
+        --offset {params.offset} \
+        --n-meta {params.top_n_meta} \
+        --n-save-gene {params.top_n_gene} \
+        --prefix {params.prefix}
+        '''
+
+
+rule metagene_coverage_cds:
+    input:
+        bw = 'mapped/bigWigs/{sample}Unique.bw',
+        htseq = 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
+    benchmark: 'benchmarks/metagene_coverage_CDS/{sample}.txt'
+    output:
+        metagene_normalized = 'mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_normalized.pickle',
+        metagene_raw = 'mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_raw.pickle',
+        topgene = 'mapped/metagene_pickled_data/CDS_offset60/{sample}_topgene_normalized.pickle',
+    resources:
+        mem_mb=60000
+    params:
+        prefix = 'mapped/metagene_pickled_data/CDS_offset60/{sample}',
+        offset = 60,
+        top_n_meta = 1000,
+        top_n_gene = 10,
+    shell:
+        r'''riboraptor metagene-coverage --bigwig {input.bw} \
+        --htseq_f {input.htseq} \
+        --region_bed {CDS_BED} \
+        --offset {params.offset} \
+        --n-meta {params.top_n_meta} \
+        --n-save-gene {params.top_n_gene} \
+        --prefix {params.prefix}
+        '''
+
+
+rule metagene_coverage_utr3:
+    input:
+        bw = 'mapped/bigWigs/{sample}Unique.bw',
+        htseq = 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
+    benchmark: 'benchmarks/metagene_coverage_utr3/{sample}.txt'
+    output:
+        metagene_normalized = 'mapped/metagene_pickled_data/UTR3/{sample}_metagene_normalized.pickle',
+        metagene_raw = 'mapped/metagene_pickled_data/UTR3/{sample}_metagene_raw.pickle',
+        topgene = 'mapped/metagene_pickled_data/UTR3/{sample}_topgene_normalized.pickle',
+    resources:
+        mem_mb=60000
+    params:
+        prefix = 'mapped/metagene_pickled_data/UTR3/{sample}',
+        offset = 0,
+        top_n_meta = 1000,
+        top_n_gene = 10,
+    shell:
+        r'''riboraptor metagene-coverage --bigwig {input.bw} \
+        --htseq_f {input.htseq} \
+        --region_bed {UTR3_BED} \
+        --offset {params.offset} \
+        --n-meta {params.top_n_meta} \
+        --n-save-gene {params.top_n_gene} \
+        --prefix {params.prefix}
+        '''
+
+
+rule pickle_counts_utr5:
+    input: 'mapped/bams/{sample}.bam'
+    benchmark: 'benchmarks/pickle_counts_utr5/{sample}.txt'
+    params:
+        prefix= 'mapped/counts_pickled_data/UTR5/{sample}'
+    output:
+        counts = 'mapped/counts_pickled_data/UTR5/{sample}_counts.pickle',
+        normalized_counts = 'mapped/counts_pickled_data/UTR5/{sample}_counts_lengths_normalized.pickle',
+    resources:
+        mem_mb=60000
+    shell:
+        r'''riboraptor count-in-feature --bam {input} \
+        --bed {UTR5_BED} \
+        --prefix {params.prefix}
+        '''
+
+
+rule pickle_counts_cds:
+    input: 'mapped/bams/{sample}.bam'
+    benchmark: 'benchmarks/pickle_counts_cds/{sample}.txt'
+    params:
+        prefix= 'mapped/counts_pickled_data/CDS/{sample}'
+    output:
+        counts = 'mapped/counts_pickled_data/CDS/{sample}_counts.pickle',
+        normalized_counts = 'mapped/counts_pickled_data/CDS/{sample}_counts_lengths_normalized.pickle',
+    resources:
+        mem_mb=60000
+    shell:
+        r'''riboraptor count-in-feature --bam {input} \
+        --bed {CDS_BED} \
+        --prefix {params.prefix}
+        '''
+
+
+rule pickle_counts_utr3:
+    input: 'mapped/bams/{sample}.bam'
+    benchmark: 'benchmarks/pickle_counts_utr3/{sample}.txt'
+    params:
+        prefix= 'mapped/counts_pickled_data/UTR3/{sample}'
+    output:
+        counts = 'mapped/counts_pickled_data/UTR3/{sample}_counts.pickle',
+        normalized_counts = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
+    resources:
+        mem_mb=60000
+    shell:
+        r'''riboraptor count-in-feature --bam {input} \
+        --bed {UTR3_BED} \
+        --prefix {params.prefix}
+        '''
+
+
+rule calculate_fragment_enrichment:
+    input: 'mapped/fragment_length_pickle/{sample}.pickle'
+    benchmark: 'benchmarks/calculate_fragment_enrichment/{sample}.txt'
+    params:
+        enrichment_range = '27-32'
+    output: 'mapped/counts_pickled_data/enrichment_scores/{sample}.txt'
+    shell: r'''riboraptor read-enrichment -i {input} > {output}'''
+
+
+rule calculate_cds_to_utr5_enrichment:
+    input:
+        utr5 = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
+        cds = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
+    benchmark: 'benchmarks/calculate_cds_to_utr5_enrichment/{sample}.txt'
+    params:
+        prefix = 'mapped/counts_pickled_data/enrichment_CDS_over_UTR5/{sample}'
+    output: 'mapped/counts_pickled_data/enrichment_CDS_over_UTR5/{sample}.pickle'
+    shell:
+        r'''riboraptor diff-region-enrichment --numerator {input.cds} --denominator {input.utr5} --params {params.prefix}'''
+
+
+rule calculate_cds_to_utr3_enrichment:
+    input:
+        utr3 = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
+        cds = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
+    benchmark: 'benchmarks/calculate_cds_to_utr3_enrichment/{sample}.txt'
+    params:
+        prefix = 'mapped/counts_pickled_data/enrichment_CDS_over_UTR3/{sample}'
+    output: 'mapped/counts_pickled_data/enrichment_CDS_over_UTR3/{sample}.pickle'
+    shell:
+        r'''riboraptor diff-region-enrichment --numerator {input.cds} --denominator {input.utr3} --prefix {params.prefix}'''
+
+
+rule plot_fragment_length_distributon:
+    input: 'mapped/fragment_length_pickle/{sample}.pickle'
+    benchmark: 'benchmarks/plot_fragment_length_distributon/{sample}.txt'
+    output: 'mapped/plots/fragment_length_dist/{sample}.png'
+    shell: r'''riboraptor plot-read-dist --read-lengths {input} --title {wildcards.sample} --millify_labels --saveto {output}'''
+
+
+rule plot_metagene_plot_raw_CDS:
+    input: 'mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_raw.pickle'
+    benchmark: 'benchmarks/plot_metagene_plot_raw_CDS/{sample}.txt'
+    params:
+        positions_to_plot = '-60:300',
+        ylabel ='Number of fragments'
+    output: 'mapped/plots/metagene/CDS/raw/{sample}.png'
+    shell: r'''riboraptor plot-read-counts --counts {input} --title {wildcards.sample} --millify_labels --identify_peak --positions {params.positions_to_plot} --ylabel {params.ylabel} --title {wildcards.sample} --saveto {output}'''
+
+
+rule plot_metagene_plot_normalized_CDS:
+    input: 'mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_normalized.pickle'
+    benchmark: 'benchmarks/plot_metagene_plot_normalized_CDS/{sample}.txt'
+    params:
+        positions_to_plot = '-60:300'
+    output: 'mapped/plots/metagene/CDS/normalized/{sample}.png'
+    shell: r'''riboraptor plot-read-counts --counts {input} --positions {params.positions_to_plot} --title {wildcards.sample} --saveto {output}'''

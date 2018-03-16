@@ -14,6 +14,7 @@ from collections import defaultdict
 RSEM_INDEX_PREFIX = None
 INTRON_BED = None
 include:
+    #'configs/Oct_10_2016_HuR_Human.py'
     'configs/Dec_12_2017_Penalva_RPS5.py'
     #'configs/Nov_11_2017_Penalva_U343_MSI1_RPS5.py'
     #'configs/Dec_12_2016_Penalva_Musashi1_U251.py'
@@ -122,6 +123,8 @@ rule all:
         expand('mapped/HTSeq/byExon/{sample_name}.exon.counts.tsv', sample_name=SAMPLE_NAMES),
         expand('mapped/HTSeq_reversestrand/byExon/{sample_name}.exon.counts.tsv', sample_name=SAMPLE_NAMES),
         expand('mapped/HTSeq_nostrand/byExon/{sample_name}.exon.counts.tsv', sample_name=SAMPLE_NAMES),
+        expand('mapped/HTSeq_reversestrand/byCDS/{sample_name}.CDS.counts.tsv', sample_name=SAMPLE_NAMES),
+        expand('mapped/HTSeq_nostrand/byCDS/{sample_name}.CDS.counts.tsv', sample_name=SAMPLE_NAMES),
         expand('mapped/HTSeq/byCDS/{sample_name}.CDS.counts.tsv', sample_name=SAMPLE_NAMES),
         expand('mapped/HTSeq/byCDS/{sample_name}.CDS.tpm.tsv', sample_name=SAMPLE_NAMES),
         expand('pickled_data/{sample_name}.fragment_lengths.pickle', sample_name=SAMPLE_NAMES),
@@ -142,9 +145,11 @@ rule all:
         expand('tracks/{sample_name}.bw', sample_name=SAMPLE_NAMES),
         expand('tracks/{sample_name}.bedGraph', sample_name=SAMPLE_NAMES),
         expand('mapped/bams/{sample_name}.bam.bai', sample_name=SAMPLE_NAMES),
-        expand('mapped/unique_mapping_bedGraphs/{sample_name}.{endtype}.{strand}.bedGraph', sample_name=SAMPL
-                                                                                            endtype=ENDTYPE,
-rule create_rsem_index:                                                                     strand=STRANDS),
+        expand('mapped/unique_mapping_bedGraphs/{sample_name}.{endtype}.{strand}.bedGraph', sample_name=SAMPLE_NAMES,
+                                                                                            strand=STRANDS,
+                                                                                            endtype=ENDTYPE),
+
+rule create_rsem_index:
     input:
         GENOME_FASTA,
         GTF
@@ -235,7 +240,7 @@ rule map_star:
              --outSAMtype BAM Unsorted\
              --outTmpDir /tmp/{params.name}\
              --outReadsUnmapped Fastx\
-             && samtools sort {params.prefix}Aligned.out.bam -o {output.bam} -T /tmp/{params.name}_sort\
+             && samtools sort -@ {threads} {params.prefix}Aligned.out.bam -o {output.bam} -T /tmp/{params.name}_sort\
              && mv {params.prefix}Aligned.toTranscriptome.out.bam {output.txbam}\
              && samtools index {output.bam}\
              && mv {params.prefix}ReadsPerGene.out.tab {output.counts}\
@@ -461,11 +466,14 @@ rule genelevel_normalized_counts_cds_offset60:
 rule sort_by_name:
     input: 'mapped/bams/{sample_name}.bam'
     output: 'mapped/bams_sortedByName/{sample_name}.sortedByName.bam'
+    threads: 16
+    params:
+        sample_name='{sample_name}'
     resources:
         mem_mb=20000
     shell:
         r'''
-        samtools sort -on {input} -T /tmp/ -o {output} && samtools index {output}
+        samtools sort -@ {threads} -on {input} -T /tmp/{params.sample_name}_sort_name -o {output} && samtools index {output}
         '''
 
 rule sam_index:
@@ -524,6 +532,35 @@ rule count_exon_reverse_strand:
         --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
         && [[ -s {output} ]]'''
 
+rule count_cds_no_strand:
+    input: 'mapped/bams_sortedByName/{sample_name}.sortedByName.bam'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq_nostrand/byCDS/{sample_name}.CDS.counts.tsv'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''source activate {PYTHON2ENV} && \
+        htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=no --minaqual={params.phred_cutoff} --type=CDS \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
+
+rule count_cds_reverse_strand:
+    input: 'mapped/bams_sortedByName/{sample_name}.sortedByName.bam'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq_reversestrand/byCDS/{sample_name}.CDS.counts.tsv'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''source activate {PYTHON2ENV} && \
+        htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=reverse --minaqual={params.phred_cutoff} --type=CDS \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
 
 rule count_cds:
     input: 'mapped/bams_sortedByName/{sample_name}.sortedByName.bam'
@@ -698,8 +735,11 @@ rule start_codon_pileup_corr:
 rule extract_uniq_mapped_reads:
     input: 'mapped/bams/{sample_name}.bam'
     output: 'mapped/unique_mapping_bams/{sample_name}.bam'
+    threads: 16
+    params:
+        sample_name='{sample_name}'
     shell:
-        r'''samtools view -q255 {input} -o {output}.unsorted && samtools sort -o {output} {output}.unsorted && rm {output}.unsorted\
+        r'''samtools view -q 255 -bh {input} -o {output}.unsorted && samtools sort -@ {threads} -T /tmp/{params.sample_name}_extract_uniq -o {output} {output}.unsorted && rm {output}.unsorted\
         && samtools index {output}'''
 
 

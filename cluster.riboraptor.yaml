@@ -1,0 +1,117 @@
+__default__:
+    q: 'cmb'
+    time: '7:00:00'
+    mem: '4000MB'
+    cores: 1
+    logdir: '/home/cmb-06/as/skchoudh/logs/'
+
+create_index:
+    cores: 16
+    mem: '61000MB'
+
+create_rsem_index:
+    cores: 16
+    mem: '61000MB'
+
+rsem_tx_level_counts:
+    cores: 16
+    mem: '61000MB'
+
+map_star:
+    time: '12:00:00'
+    cores: 16
+    mem: '61000MB'
+
+count_exon:
+    time: '24:00:00'
+    mem: '60000MB'
+
+count_cds:
+    time: '24:00:00'
+    mem: '60000MB'
+
+create_uniq_bedgraph_from_bam:
+    time: '12:00:00'
+    cores: 16
+    mem: '40gb'
+
+count_exon: 
+    time: '24:00:00'
+    mem: '60000MB'
+
+create_uniq_bedgraph_from_bam:
+    time: '12:00:00'
+    cores: 16
+    mem: '40gb'
+
+create_uniq_bigwig_from_uniq_bedgraph:
+    time: '12:00:00'
+    cores: 1
+    mem: '10gb'
+
+create_uniqmulti_bigwig_from_uniqmulti_bedgraph:
+    time: '12:00:00'
+    cores: 1
+    mem: '10gb'
+
+fragment_length_pickle:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+infer_experiment:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+merge_bams:
+    time: '12:00:00'
+    cores: 16
+    mem: '40gb'
+
+metagene_coverage_CDS:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+metagene_coverage_UTR3:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+metagene_coverage_utr5:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+pickle_counts_cds:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+pickle_counts_utr3:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+pickle_counts_utr5:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+
+plot_fragment_length_distributon:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+plot_metagene_plot_normalized_CDS:
+    time: '12:00:00'
+    cores: 1
+    mem: '40gb'
+
+sort_by_name:
+    time: '12:00:00'
+    cores: 16
+    mem: '40gb'
+
