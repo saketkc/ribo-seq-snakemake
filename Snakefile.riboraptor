@@ -13,6 +13,7 @@ import numpy as np
 
 RSEM_INDEX_PREFIX = None
 INTRON_BED = None
+enrichment_ranges = ['27-32',  '28-31']
 
 
 include:
@@ -28,6 +29,7 @@ if not RSEM_INDEX_PREFIX:
 if not INTRON_BED:
     INTRON_BED = CDS_BED.replace('cds', 'intron')
 
+tRNA_BED = os.path.dirname(GENOME_FASTA).replace('fasta', 'tRNA') + '/' + 'tRNAs.bed'
 
 def get_strandedness(filepath):
     with open(filepath) as f:
@@ -93,8 +95,8 @@ SAMPLE_LANE = set(SAMPLE_LANE)
 #print(SAMPLES)
 SAMPLE_LANE = sorted(SAMPLE_LANE, key=lambda tup: tup[0])
 print(SAMPLE_LANE)
-sampleS, LANE_NAMES = zip(*SAMPLE_LANE)
-sampleS_U = sorted(set(sampleS))
+SAMPLES, LANE_NAMES = zip(*SAMPLE_LANE)
+SAMPLES_U = sorted(set(SAMPLES))
 
 
 SAMPLEWISE_LANES = defaultdict(list)
@@ -119,24 +121,35 @@ def sra_to_fastq_input(wildcards):
     print("WRONG encodeterend: {}".format(srr_id))
 rule all:
     input:
-        expand('qc/{sample}_{lane}_R1_001_fastqc.html', zip, sample=sampleS, lane=LANE_NAMES),
-        expand('preprocessed/{sample}_{lane}_R1_001_trimmed.fq.gz', zip, sample=sampleS, lane=LANE_NAMES),
-        expand('mapped/lanewise_bams/{sample}_{lane}.bam', zip, sample=sampleS, lane=LANE_NAMES),
-        expand('inferred_experiment/{sample}.txt', sample=sampleS),
-        expand('mapped/bams/{sample}.bam', sample=sampleS),
-        expand('mapped/bams_sortedByName/{sample}.sortedByName.bam', sample=sampleS),
-        expand('mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv', sample=sampleS),
-        expand('mapped/HTSeq/byExon/{sample}.exon.counts.tsv', sample=sampleS),
-        expand('mapped/bigWigs/{sample}Multiple.bw', sample=sampleS),
-        expand('mapped/bigWigs/{sample}Unique.bw', sample=sampleS),
-        expand('mapped/bigWigs_normalized/{sample}Multiple.bw', sample=sampleS),
-        expand('mapped/bigWigs_normalized/{sample}Unique.bw', sample=sampleS),
-        expand('mapped/counts_pickled_data/UTR5/{sample}_counts.pickle', sample=sampleS),
-        expand('mapped/counts_pickled_data/CDS/{sample}_counts.pickle', sample=sampleS),
-        expand('mapped/counts_pickled_data/UTR3/{sample}_counts.pickle', sample=sampleS),
-        expand('mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_normalized.pickle', sample=sampleS),
-        expand('mapped/plots/metagene/CDS/normalized/{sample}.png', sample=sampleS),
-        expand('mapped/plots/fragment_length_dist/{sample}.png', sample=sampleS),
+        expand('qc/{sample}_{lane}_R1_001_fastqc.html', zip, sample=SAMPLES, lane=LANE_NAMES),
+        expand('preprocessed/{sample}_{lane}_R1_001_trimmed.fq.gz', zip, sample=SAMPLES, lane=LANE_NAMES),
+        expand('mapped/lanewise_bams/{sample}_{lane}.bam', zip, sample=SAMPLES, lane=LANE_NAMES),
+        expand('inferred_experiment/{sample}.txt', sample=SAMPLES),
+        expand('mapped/bams/{sample}.bam', sample=SAMPLES),
+        expand('mapped/bams_sortedByName/{sample}.sortedByName.bam', sample=SAMPLES),
+        expand('mapped/bams_unique/{sample}.bam', sample=SAMPLES),
+        expand('mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLES),
+        expand('mapped/HTSeq/byExon/{sample}.exon.counts.tsv', sample=SAMPLES),
+        expand('mapped/HTSeq_reversestrand/byCDS/{sample}.CDS.counts.tsv', sample=SAMPLES),
+        expand('mapped/HTSeq_reversestrand/byExon/{sample}.exon.counts.tsv', sample=SAMPLES),
+        expand('mapped/bigWigs/{sample}Multiple.bw', sample=SAMPLES),
+        expand('mapped/bigWigs/{sample}Unique.bw', sample=SAMPLES),
+        expand('mapped/bigWigs_normalized/{sample}Multiple.bw', sample=SAMPLES),
+        expand('mapped/bigWigs_normalized/{sample}Unique.bw', sample=SAMPLES),
+        #expand('mapped/counts_pickled_data_htseq/tRNA/{sample}_counts.pickle', sample=SAMPLES),
+        #expand('mapped/counts_pickled_data_htseq/UTR5/{sample}_counts.pickle', sample=SAMPLES),
+        #expand('mapped/counts_pickled_data_htseq/CDS/{sample}_counts.pickle', sample=SAMPLES),
+        #expand('mapped/counts_pickled_data_htseq/UTR3/{sample}_counts.pickle', sample=SAMPLES),
+        #expand('mapped/counts_pickled_data_htseq/enrichment_scores/{enrichment_range}/{sample}.txt', enrichment_range=enrichment_ranges, sample=SAMPLES),
+        #expand('mapped/counts_pickled_data_htseq/enrichment_CDS_over_UTR5/{sample}.pickle', sample=SAMPLES),
+        #expand('mapped/counts_pickled_data_htseq/enrichment_CDS_over_UTR3/{sample}.pickle', sample=SAMPLES),
+        #expand('mapped/gene_coverage_collapsed_to_metagene/{sample}_metagene.pickle', sample=SAMPLES),
+        #expand('mapped/codon_wise_counts/{sample}_codon_mean.csv', sample=SAMPLES),
+        #expand('mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_normalized.pickle', sample=SAMPLES),
+        #expand('mapped/gene_coverages/{sample}_gene_coverages.tsv.gz', sample=SAMPLES),
+        expand('mapped/plots/metagene/{sample}.pdf', sample=SAMPLES),
+        expand('mapped/plots/read_length/{sample}.pdf', sample=SAMPLES),
+        expand('mapped/genewise_counts_CDS/{sample}.tsv', sample=SAMPLES),
 
 
 
@@ -396,14 +409,35 @@ rule count_cds:
         && [[ -s {output} ]]'''
 
 
-rule fragment_length_pickle:
-    input: 'mapped/bams/{sample}.bam'
-    benchmark: 'benchmarks/fragment_length_pickle/{sample}.txt'
+rule count_exon_reversestrand:
+    input: 'mapped/bams_sortedByName/{sample}.sortedByName.bam'
     params:
-        prefix= 'mapped/fragment_length_pickle/{sample}'
-    output: 'mapped/fragment_length_pickle/{sample}.pickle'
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq_reversestrand/byExon/{sample}.exon.counts.tsv'
+    resources:
+        mem_mb=60000
     shell:
-        r'''riboraptor read-length-dist --bam {input} --prefix {params.prefix}'''
+        r'''htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=reverse --minaqual={params.phred_cutoff} --type=exon \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
+
+
+rule count_cds_reversestrand:
+    input: 'mapped/bams_sortedByName/{sample}.sortedByName.bam'
+    params:
+        annotation=GTF,
+        phred_cutoff=5
+    output: 'mapped/HTSeq_reversestrand/byCDS/{sample}.CDS.counts.tsv'
+    resources:
+        mem_mb=60000
+    shell:
+        r'''htseq-count --order=name --format=bam --mode=intersection-strict \
+        --stranded=reverse --minaqual={params.phred_cutoff} --type=CDS \
+        --idattr=gene_id {input} {params.annotation} | sed -E 's/\.[0-9]+//' > {output} \
+        && [[ -s {output} ]]'''
+
 
 
 rule metagene_coverage_utr5:
@@ -487,111 +521,199 @@ rule metagene_coverage_utr3:
         '''
 
 
-rule pickle_counts_utr5:
+rule extract_uniq_mapping:
     input: 'mapped/bams/{sample}.bam'
-    benchmark: 'benchmarks/pickle_counts_utr5/{sample}.txt'
+    output: 'mapped/bams_unique/{sample}.bam'
+    threads: 16
+    shell:
+        r'''samtools view -b -q 255 {input} -o {output}.temp \
+        && samtools sort -@ {threads} {output}.temp -o {output} -T /tmp/{wildcards.sample}_sort \
+        && rm -rf {output}.temp \
+        && samtools index {output}'''
+
+rule fragment_length_pickle:
+    input: 'mapped/bams_unique/{sample}.bam'
     params:
-        prefix= 'mapped/counts_pickled_data/UTR5/{sample}'
+        prefix= 'mapped/fragment_length_pickle/{sample}'
+    output: 'mapped/fragment_length_pickle/{sample}.pickle'
+    shell:
+        r'''riboraptor read-length-dist --bam {input} --prefix {params.prefix}'''
+
+rule calculate_fragment_enrichment:
+    input: 'mapped/fragment_length_pickle/{sample}.pickle'
+    output: 'mapped/counts_pickled_data_htseq/enrichment_scores/{enrichment_range}/{sample}.txt'
+    params:
+        lrange = '{enrichment_range}'
+    shell: r'''riboraptor read-enrichment --lrange {params.lrange} -i {input} > {output}'''
+
+rule calculate_cds_to_utr5_enrichment:
+    input:
+        utr5 = 'mapped/counts_pickled_data_htseq/UTR5/{sample}_counts_lengths_normalized.pickle',
+        cds = 'mapped/counts_pickled_data_htseq/CDS/{sample}_counts_lengths_normalized.pickle',
+    params:
+        prefix = 'mapped/counts_pickled_data_htseq/enrichment_CDS_over_UTR5/{sample}'
+    output: 'mapped/counts_pickled_data_htseq/enrichment_CDS_over_UTR5/{sample}.pickle'
+    shell:
+        r'''riboraptor diff-region-enrichment --numerator {input.cds} --denominator {input.utr5} --prefix {params.prefix}'''
+
+rule calculate_cds_to_utr3_enrichment:
+    input:
+        utr3 = 'mapped/counts_pickled_data_htseq/UTR3/{sample}_counts_lengths_normalized.pickle',
+        cds = 'mapped/counts_pickled_data_htseq/CDS/{sample}_counts_lengths_normalized.pickle',
+    params:
+        prefix = 'mapped/counts_pickled_data_htseq/enrichment_CDS_over_UTR3/{sample}'
+    output: 'mapped/counts_pickled_data_htseq/enrichment_CDS_over_UTR3/{sample}.pickle'
+    shell:
+        r'''riboraptor diff-region-enrichment --numerator {input.cds} --denominator {input.utr3} --prefix {params.prefix}'''
+
+rule counts_to_tpm:
+    input: 'mapped/HTSeq/byCDS/{sample}.CDS.counts.tsv'
+    output: 'mapped/HTSeq/byCDS/{sample}.CDS.tpm.tsv'
+    shell:
+        r'''source activate {PYTHON2ENV} && \
+        python /home/cmb-panasas2/skchoudh/github_projects/re-ribo-mine/scripts/counts_to_tpm.py {input} {output} {CDS_BED}'''
+
+
+rule pickle_tRNA_counts:
+    input: 'mapped/bams_unique/{sample}.bam'
+    params:
+        prefix= 'mapped/counts_pickled_data_htseq/tRNA/{sample}'
     output:
-        counts = 'mapped/counts_pickled_data/UTR5/{sample}_counts.pickle',
-        normalized_counts = 'mapped/counts_pickled_data/UTR5/{sample}_counts_lengths_normalized.pickle',
+        counts = 'mapped/counts_pickled_data_htseq/tRNA/{sample}_counts.pickle',
+        normalized_counts = 'mapped/counts_pickled_data_htseq/tRNA/{sample}_counts_lengths_normalized.pickle',
     resources:
         mem_mb=60000
     shell:
-        r'''riboraptor count-in-feature --bam {input} \
+        r'''riboraptor count-in-feature-htseq --bam {input} \
+        --bed {tRNA_BED} \
+        --prefix {params.prefix}
+        '''
+
+rule pickle_counts_utr5:
+    input: 'mapped/bams_unique/{sample}.bam'
+    params:
+        prefix= 'mapped/counts_pickled_data_htseq/UTR5/{sample}'
+    output:
+        counts = 'mapped/counts_pickled_data_htseq/UTR5/{sample}_counts.pickle',
+        normalized_counts = 'mapped/counts_pickled_data_htseq/UTR5/{sample}_counts_lengths_normalized.pickle',
+    resources:
+        mem_mb=60000
+    shell:
+        r'''riboraptor count-in-feature-htseq --bam {input} \
         --bed {UTR5_BED} \
         --prefix {params.prefix}
         '''
 
 
 rule pickle_counts_cds:
-    input: 'mapped/bams/{sample}.bam'
-    benchmark: 'benchmarks/pickle_counts_cds/{sample}.txt'
+    input: 'mapped/bams_unique/{sample}.bam'
     params:
-        prefix= 'mapped/counts_pickled_data/CDS/{sample}'
+        prefix= 'mapped/counts_pickled_data_htseq/CDS/{sample}'
     output:
-        counts = 'mapped/counts_pickled_data/CDS/{sample}_counts.pickle',
-        normalized_counts = 'mapped/counts_pickled_data/CDS/{sample}_counts_lengths_normalized.pickle',
+        counts = 'mapped/counts_pickled_data_htseq/CDS/{sample}_counts.pickle',
+        normalized_counts = 'mapped/counts_pickled_data_htseq/CDS/{sample}_counts_lengths_normalized.pickle',
     resources:
         mem_mb=60000
     shell:
-        r'''riboraptor count-in-feature --bam {input} \
+        r'''riboraptor count-in-feature-htseq --bam {input} \
         --bed {CDS_BED} \
         --prefix {params.prefix}
         '''
 
 
 rule pickle_counts_utr3:
-    input: 'mapped/bams/{sample}.bam'
-    benchmark: 'benchmarks/pickle_counts_utr3/{sample}.txt'
+    input: 'mapped/bams_unique/{sample}.bam'
     params:
-        prefix= 'mapped/counts_pickled_data/UTR3/{sample}'
+        prefix= 'mapped/counts_pickled_data_htseq/UTR3/{sample}'
     output:
-        counts = 'mapped/counts_pickled_data/UTR3/{sample}_counts.pickle',
-        normalized_counts = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
+        counts = 'mapped/counts_pickled_data_htseq/UTR3/{sample}_counts.pickle',
+        normalized_counts = 'mapped/counts_pickled_data_htseq/UTR3/{sample}_counts_lengths_normalized.pickle',
     resources:
         mem_mb=60000
     shell:
-        r'''riboraptor count-in-feature --bam {input} \
+        r'''riboraptor count-in-feature-htseq --bam {input} \
         --bed {UTR3_BED} \
         --prefix {params.prefix}
         '''
 
 
-rule calculate_fragment_enrichment:
-    input: 'mapped/fragment_length_pickle/{sample}.pickle'
-    benchmark: 'benchmarks/calculate_fragment_enrichment/{sample}.txt'
+rule pickle_metagene:
+    input:  'mapped/gene_coverages/{sample}_gene_coverages.tsv.gz'
+    output: 'mapped/gene_coverage_collapsed_to_metagene/{sample}_metagene.pickle'
     params:
-        enrichment_range = '27-32'
-    output: 'mapped/counts_pickled_data/enrichment_scores/{sample}.txt'
-    shell: r'''riboraptor read-enrichment -i {input} > {output}'''
-
-
-rule calculate_cds_to_utr5_enrichment:
-    input:
-        utr5 = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
-        cds = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
-    benchmark: 'benchmarks/calculate_cds_to_utr5_enrichment/{sample}.txt'
-    params:
-        prefix = 'mapped/counts_pickled_data/enrichment_CDS_over_UTR5/{sample}'
-    output: 'mapped/counts_pickled_data/enrichment_CDS_over_UTR5/{sample}.pickle'
+        target_length = 2500
+    resources:
+        mem_mb=60000
     shell:
-        r'''riboraptor diff-region-enrichment --numerator {input.cds} --denominator {input.utr5} --params {params.prefix}'''
+        r'''riboraptor collapse-gene-coverage --gene_coverage {input} --target_length {params.target_length} --outfile {output}
+        '''
 
-
-rule calculate_cds_to_utr3_enrichment:
-    input:
-        utr3 = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
-        cds = 'mapped/counts_pickled_data/UTR3/{sample}_counts_lengths_normalized.pickle',
-    benchmark: 'benchmarks/calculate_cds_to_utr3_enrichment/{sample}.txt'
+rule pickle_codonwise:
+    input: 
+        gene_coverage = 'mapped/gene_coverages/{sample}_gene_coverages.tsv.gz',
+        metagene = 'mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_normalized.pickle'
     params:
-        prefix = 'mapped/counts_pickled_data/enrichment_CDS_over_UTR3/{sample}'
-    output: 'mapped/counts_pickled_data/enrichment_CDS_over_UTR3/{sample}.pickle'
+        prefix = 'mapped/codon_wise_counts/{sample}'
+    output:
+        codon_sum ='mapped/codon_wise_counts/{sample}_codon_sum.csv',
+        total_codon_counts ='mapped/codon_wise_counts/{sample}_total_codon_counts.csv',
+        codon_mean ='mapped/codon_wise_counts/{sample}_codon_mean.csv',
     shell:
-        r'''riboraptor diff-region-enrichment --numerator {input.cds} --denominator {input.utr3} --prefix {params.prefix}'''
+        r'''python {SRC_DIR}/codon_level_counts.py --metagene {input.metagene} --gene_coverage {input.gene_coverage} --codon_map {CODON_MAP} --prefix {params.prefix}
+        '''
 
 
-rule plot_fragment_length_distributon:
-    input: 'mapped/fragment_length_pickle/{sample}.pickle'
-    benchmark: 'benchmarks/plot_fragment_length_distributon/{sample}.txt'
-    output: 'mapped/plots/fragment_length_dist/{sample}.png'
-    shell: r'''riboraptor plot-read-dist --read-lengths {input} --title {wildcards.sample} --millify_labels --saveto {output}'''
 
-
-rule plot_metagene_plot_raw_CDS:
-    input: 'mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_raw.pickle'
-    benchmark: 'benchmarks/plot_metagene_plot_raw_CDS/{sample}.txt'
+rule export_gene_coverage:
+    input: 'mapped/bigWigs/{sample}Unique.bw'
     params:
-        positions_to_plot = '-60:300',
-        ylabel ='Number of fragments'
-    output: 'mapped/plots/metagene/CDS/raw/{sample}.png'
-    shell: r'''riboraptor plot-read-counts --counts {input} --title {wildcards.sample} --millify_labels --identify_peak --positions {params.positions_to_plot} --ylabel {params.ylabel} --title {wildcards.sample} --saveto {output}'''
+        prefix = 'mapped/gene_coverages/{sample}'
+    output: 'mapped/gene_coverages/{sample}_gene_coverages.tsv.gz'
+    benchmark: 'benchmarks/export_gene_coverage/{sample}.txt'
+    shell:
+        r'''riboraptor export-gene-coverages \
+        --bigwig {input} \
+        --region_bed {CDS_BED} \
+        --prefix {params.prefix} \
+        && gzip {params.prefix}_gene_coverages.tsv
+        '''
 
+rule export_read_length:
+    input: 'mapped/bams_unique/{sample}.bam'
+    output: 'mapped/read_lengths/{sample}.tsv'
+    shell: 
+        r'''
+        riboraptor export-read-length --bam {input} --saveto {output}
+        '''
 
-rule plot_metagene_plot_normalized_CDS:
-    input: 'mapped/metagene_pickled_data/CDS_offset60/{sample}_metagene_normalized.pickle'
-    benchmark: 'benchmarks/plot_metagene_plot_normalized_CDS/{sample}.txt'
-    params:
-        positions_to_plot = '-60:300'
-    output: 'mapped/plots/metagene/CDS/normalized/{sample}.png'
-    shell: r'''riboraptor plot-read-counts --counts {input} --positions {params.positions_to_plot} --title {wildcards.sample} --saveto {output}'''
+rule plot_read_length:
+    input: 'mapped/read_lengths/{sample}.tsv'
+    output: 'mapped/plots/read_length/{sample}.pdf'
+    shell:
+        r'''
+        riboraptor plot-read-length --millify_labels --read-lengths {input} --saveto {output}
+        '''
+
+rule export_metagenge:
+    input: 'mapped/bigWigs/{sample}Unique.bw'
+    output: 'mapped/metagene_coverages/{sample}.tsv'
+    shell:
+        r'''
+        riboraptor export-metagene-coverage --bigwig {input} \
+        --region_bed hg38_cds --ignore_tx_version --saveto {output}
+        '''
+
+rule plot_metagene:
+    input: 'mapped/metagene_coverages/{sample}.tsv'
+    output: 'mapped/plots/metagene/{sample}.pdf'
+    shell: 
+        r'''
+        riboraptor plot-metagene --counts {input} --saveto {output} --positions -60:300 --xrotation 90
+        '''
+
+rule metagene_coverage_cds2:
+    input: 'mapped/bams_unique/{sample}.bam'
+    output: 'mapped/genewise_counts_CDS/{sample}.tsv'
+    shell:
+        r'''riboraptor count-reads-bed --bam {input} --bed hg38_cds --saveto {output}
+        '''

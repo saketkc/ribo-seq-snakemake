@@ -1,9 +1,14 @@
+
+
+
+
+
 ## Absolute location where all raw files are
 RAWDATA_DIR = '/home/cmb-06/as/skchoudh/dna/Nov_11_2017_Penalva_U343_MSI1_RPS5/Penalva_L_10102017_usc'
 
 
 ## Output directory
-OUT_DIR = '/home/cmb-06/as/skchoudh/rna/Nov_11_2017_Penalva_U343_MSI1_RPS5'
+OUT_DIR = '/home/cmb-panasas2//skchoudh/rna/Nov_11_2017_Penalva_U343_MSI1_RPS5'
 
 
 ## Absolute location to 're-ribo/scripts' directory

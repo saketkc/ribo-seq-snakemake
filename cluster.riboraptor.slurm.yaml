@@ -1,41 +1,45 @@
 __default__:
     q: 'cmb'
-    time: '7:00:00'
+    time: '12:00:00'
+    pmem: '4000MB'
     mem: '4000MB'
+    vmem: '61000MB'
     cores: 1
     logdir: '/home/cmb-06/as/skchoudh/logs/'
+    out: '/home/cmb-06/as/skchoudh/logs/{rule}.{wildcards}.out'
+    err: '/home/cmb-06/as/skchoudh/logs/{rule}.{wildcards}.err'
 
 create_index:
     cores: 16
-    mem: '61000MB'
+    mem: '4000MB'
 
 create_rsem_index:
     cores: 16
-    mem: '61000MB'
+    mem: '4000MB'
 
 rsem_tx_level_counts:
     cores: 16
-    mem: '61000MB'
+    mem: '4000MB'
 
 map_star:
-    time: '1:00:00'
+    time: '12:00:00'
     cores: 16
-    mem: '61000MB'
+    mem: '4000MB'
 
 count_exon:
     time: '24:00:00'
-    mem: '60000MB'
+    mem: '4000MB'
 
 count_cds:
     time: '24:00:00'
-    mem: '60000MB'
+    mem: '4000MB'
 
 create_uniq_bedgraph_from_bam:
     time: '12:00:00'
     cores: 16
     mem: '40gb'
 
-count_exon: 
+count_exon:
     time: '24:00:00'
     mem: '60000MB'
 
@@ -65,6 +69,11 @@ infer_experiment:
     mem: '40gb'
 
 merge_bams:
+    time: '12:00:00'
+    cores: 16
+    mem: '40gb'
+
+merge_tx_bams:
     time: '12:00:00'
     cores: 16
     mem: '40gb'
@@ -99,7 +108,6 @@ pickle_counts_utr5:
     cores: 1
     mem: '40gb'
 
-
 plot_fragment_length_distributon:
     time: '12:00:00'
     cores: 1
@@ -114,4 +122,17 @@ sort_by_name:
     time: '12:00:00'
     cores: 16
     mem: '40gb'
+
+counts_to_tpm:
+    time: '12:00:00'
+    mem: '10gb'
+
+pickle_tRNA_counts:
+    time: '12:00:00'
+    mem: '10gb'
+
+extract_uniq_mapping:
+    time: '12:00:00'
+    mem: '10gb'
+    cores: 16
 

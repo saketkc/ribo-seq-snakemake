@@ -1,15 +1,14 @@
 
-
 ## Absolute location where all raw files are
-RAWDATA_DIR = '/home/cmb-06/as/skchoudh/dna/Oct_10_2016_HuR_Human_Mouse_Liver/Ribo-Seq-Human'
+RAWDATA_DIR = '/auto/cmb-06/as/skchoudh/dna/May_05_2018_Penalva_RPS05_RNASeq/PenalvaL_05142018'
 
 
 ## Output directory
-OUT_DIR = '/staging/as/skchoudh/Oct_10_2016_HuR_Human_Mouse_Liver/Ribo-Seq_human'
+OUT_DIR = '/staging/as/skchoudh/rna/May_05_2018_Penalva_RPS05_RNASeq'
 
 
 ## Absolute location to 're-ribo/scripts' directory
-SRC_DIR = '/home/cmb-panasas2/skchoudh/github_projects/re-ribo/scripts'
+SRC_DIR = '/auto/cmb-panasas2/skchoudh/github_projects/re-ribo-mine/scripts'
 
 
 ## Genome fasta location
@@ -50,6 +49,8 @@ CDS_BED = '/home/cmb-panasas2/skchoudh/genomes/hg38/annotation/gencode.v25.gffut
 UTR5_BED = '/home/cmb-panasas2/skchoudh/genomes/hg38/annotation/gencode.v25.gffutils.UTR5.bed'
 
 UTR3_BED = '/home/cmb-panasas2/skchoudh/genomes/hg38/annotation/gencode.v25.gffutils.UTR3.bed'
+
+
 ## Name of python2 environment
 ## The following package needs to be installed in that environment
 ## numpy scipy matploltib seaborn pysam pybedtools htseq
@@ -62,3 +63,4 @@ HTSEQ_STRANDED = 'yes'
 FEATURECOUNTS_S = '-s 1'
 FEATURECOUNTS_T = 'CDS'
 HTSEQ_MODE = 'intersection-strict'
+
